@@ -59,6 +59,36 @@ Para classificar um arquivo com um checkpoint treinado:
 uv run python -m ast_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --checkpoint checkpoints/ast-gtzan-head
 ```
 
+### Argumentos
+
+`ast_finetuning.train`:
+
+| Flag | Padrão | Descrição |
+| --- | --- | --- |
+| `--dataset` | `fma_small` | Dataset de treino: `fma_small`, `fma_medium` ou `gtzan`. Cada dataset gera um modelo separado. |
+| `--data-dir` | `datasets` | Pasta raiz dos datasets (contém `fma_small/`, `fma_medium/` e `GTZAN/`). |
+| `--metadata` | `datasets/fma_tracks.csv` | CSV de metadados do FMA. Ignorado no GTZAN. |
+| `--output-dir` | `checkpoints/ast-{dataset}-{finetuning}` | Pasta onde o melhor checkpoint, o `history.csv` e as métricas são salvos. |
+| `--model-name` | `MIT/ast-finetuned-audioset-10-10-0.4593` | Checkpoint pré-treinado do AST no Hugging Face. |
+| `--pitch-shift-semitones` | `-1 1` | Deslocamentos de pitch, em semitons, usados como augmentation no treino do GTZAN. Passe a flag sem valores para desativar. Ignorado no FMA. |
+| `--epochs` | `30` | Número máximo de épocas. |
+| `--early-stopping-patience` | `3` | Épocas seguidas sem redução da `validation_loss` antes de interromper o treino. `0` desativa. |
+| `--batch-size` | `16` | Tamanho do batch de treino e validação. |
+| `--finetuning` | `head` | Metodologia de ajuste fino: `head` (backbone congelado) ou `lora`. |
+| `--learning-rate` | `1e-4` | Learning rate do AdamW para os parâmetros treináveis (cabeça e, com LoRA, os adaptadores). |
+| `--lora-rank` | `1` | Rank `r` das matrizes LoRA `A` e `B`. Só com `--finetuning lora`. |
+| `--lora-alpha` | `2` | Escala `alpha` do LoRA; a atualização é multiplicada por `alpha / r`. Só com `--finetuning lora`. |
+| `--lora-dropout` | `0.2` | Dropout aplicado na entrada dos adaptadores LoRA. Só com `--finetuning lora`. |
+| `--lora-target-modules` | `q_proj v_proj` | Camadas lineares do AST que recebem adaptadores: `q_proj`, `k_proj`, `v_proj`, `o_proj` (atenção) e `fc1`, `fc2` (MLP). Só com `--finetuning lora`. |
+| `--seed` | `1337` | Semente aleatória do Python e do PyTorch. |
+
+`ast_finetuning.predict`:
+
+| Argumento | Padrão | Descrição |
+| --- | --- | --- |
+| `audio` (posicional) | obrigatório | Arquivo de áudio a ser classificado. |
+| `--checkpoint` | obrigatório | Pasta do checkpoint gerado pelo treino, por exemplo `checkpoints/ast-gtzan-head`. |
+
 ### Métricas de desempenho
 
 Todas as métricas são calculadas no conjunto de validação e salvas em `--output-dir`:
@@ -77,16 +107,7 @@ As métricas macro-averaged são a média simples das métricas por classe, de m
 uv run python -m ast_finetuning.train --dataset gtzan --data-dir datasets --finetuning lora
 ```
 
-Hiperparâmetros disponíveis:
-
-| Flag | Padrão | Descrição |
-| --- | --- | --- |
-| `--lora-rank` | `1` | Rank `r` das matrizes `A` e `B`. |
-| `--lora-alpha` | `2` | Escala `alpha`; a atualização é multiplicada por `alpha / r`. |
-| `--lora-dropout` | `0.2` | Dropout aplicado na entrada dos adaptadores. |
-| `--lora-target-modules` | `q_proj v_proj` | Camadas lineares do AST adaptadas. Opções: `q_proj`, `k_proj`, `v_proj`, `o_proj` (atenção) e `fc1`, `fc2` (MLP). |
-
-Com os valores padrão e as 8 classes do FMA-Small, 43.016 parâmetros são treinados (≈0,05% do modelo). No modo `lora` o backbone fica em modo de treino para que o dropout dos adaptadores seja aplicado. A metodologia e os hiperparâmetros do LoRA são salvos no `config.json` do checkpoint, de modo que o `predict` reconstrói o modelo correto sem flags adicionais.
+Os hiperparâmetros do LoRA (`--lora-rank`, `--lora-alpha`, `--lora-dropout` e `--lora-target-modules`) estão descritos em [Argumentos](#argumentos). Com os valores padrão e as 8 classes do FMA-Small, 43.016 parâmetros são treinados (≈0,05% do modelo). No modo `lora` o backbone fica em modo de treino para que o dropout dos adaptadores seja aplicado. A metodologia e os hiperparâmetros do LoRA são salvos no `config.json` do checkpoint, de modo que o `predict` reconstrói o modelo correto sem flags adicionais.
 
 ## Pré-processamento
 

@@ -19,7 +19,7 @@ def main() -> None:
         "--checkpoint",
         type=Path,
         required=True,
-        help="Pasta do checkpoint, ex.: checkpoints/ast-gtzan-head ou checkpoints/ast-fma-lora.",
+        help="Pasta do checkpoint, ex.: checkpoints/ast-gtzan-head ou checkpoints/ast-fma_small-lora.",
     )
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
