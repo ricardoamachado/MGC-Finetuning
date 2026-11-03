@@ -89,6 +89,13 @@ uv run python -m ast_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --che
 | `audio` (posicional) | obrigatório | Arquivo de áudio a ser classificado. |
 | `--checkpoint` | obrigatório | Pasta do checkpoint gerado pelo treino, por exemplo `checkpoints/ast-gtzan-head`. |
 
+`ast_finetuning.plot`:
+
+| Flag | Padrão | Descrição |
+| --- | --- | --- |
+| `--checkpoint` | obrigatório | Pasta do checkpoint com os CSVs gerados pelo treino. |
+| `--output-dir` | `{checkpoint}/figures` | Pasta onde os PDFs são salvos. |
+
 ### Métricas de desempenho
 
 Todas as métricas são calculadas no conjunto de validação e salvas em `--output-dir`:
@@ -100,6 +107,24 @@ Todas as métricas são calculadas no conjunto de validação e salvas em `--out
 | `confusion_matrix.csv` | Matriz de confusão normalizada por linha da melhor época: a célula (`true_label`=i, coluna j) é P(predito = j \| verdadeiro = i). |
 
 As métricas macro-averaged são a média simples das métricas por classe, de modo que todos os gêneros têm o mesmo peso independentemente do número de faixas; uma classe nunca prevista entra com valor 0. Os arquivos da melhor época são sobrescritos sempre que um novo checkpoint é salvo.
+
+### Figuras
+
+O script `ast_finetuning.plot` lê os CSVs de um checkpoint e gera as figuras em PDF, com textos em inglês, prontas para trabalhos acadêmicos:
+
+```powershell
+uv run python -m ast_finetuning.plot --checkpoint checkpoints/ast-gtzan-lora
+```
+
+| Arquivo | Conteúdo |
+| --- | --- |
+| `loss.pdf` | Loss de treino e validação por época. |
+| `accuracy.pdf` | Acurácia de treino e validação por época. |
+| `macro_metrics.pdf` | Precision, recall e F1 macro-averaged de validação por época. |
+| `confusion_matrix.pdf` | Matriz de confusão normalizada da melhor época, com o valor de cada célula. |
+| `per_class_metrics.pdf` | Precision, recall e F1 por classe na melhor época. |
+
+As curvas marcam a época do checkpoint salvo (melhor acurácia de validação). As fontes são embutidas como TrueType (sem fontes Type 3) e o texto continua editável. As cores vêm de uma paleta segura para daltonismo, e as séries das curvas também usam marcadores diferentes, para continuarem distinguíveis em impressão em tons de cinza. Checkpoints antigos sem métricas macro ou sem os CSVs da melhor época geram apenas as figuras possíveis.
 
 ### Ajuste fino com LoRA
 
