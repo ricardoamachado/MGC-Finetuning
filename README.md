@@ -1,11 +1,18 @@
-# Fine-tuning do AST em PyTorch
+# MGC Fine-tuning
 
-Projeto para fine-tuning do modelo [`MIT/ast-finetuned-audioset-10-10-0.4593`](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593) para classificação de gêneros musicais nos datasets FMA e GTZAN. Como os gêneros dos datasets não coincidem, cada um gera um modelo separado, escolhido pela flag `--dataset {fma_small,fma_medium,gtzan}` (padrão `fma_small`).
+Projeto em PyTorch para fine-tuning de transformers de áudio pré-treinados na classificação de gêneros musicais (*Music Genre Classification*), nos datasets FMA e GTZAN. Como os gêneros dos datasets não coincidem, cada um gera um modelo separado, escolhido pela flag `--dataset {fma_small,fma_medium,gtzan}` (padrão `fma_small`).
+
+O modelo pré-treinado é escolhido pela flag `--model`:
+
+- `ast` (padrão): Audio Spectrogram Transformer, com os pesos [`MIT/ast-finetuned-audioset-10-10-0.4593`](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593).
+- `bat`: [Better Audio Transformer](https://github.com/houtan-ghaffari/BAT_ICML2026), com os pesos do encoder [`lrauch/BAT-vit-b16-pretrainedAS2M`](https://huggingface.co/lrauch/BAT-vit-b16-pretrainedAS2M).
 
 Há duas metodologias de ajuste fino, escolhidas pela flag `--finetuning`:
 
-- `head` (padrão): os pesos do backbone AST ficam congelados e somente a cabeça `Linear + Softmax` é treinada para as classes do dataset.
-- `lora`: os pesos originais do AST continuam congelados, mas adaptadores LoRA de baixo rank são injetados (via [`peft`](https://github.com/huggingface/peft)) nas projeções de atenção do backbone e treinados junto com a cabeça `Linear + Softmax`.
+- `head` (padrão): os pesos do backbone ficam congelados e somente a cabeça `Linear + Softmax` é treinada para as classes do dataset.
+- `lora`: os pesos originais do backbone continuam congelados, mas adaptadores LoRA de baixo rank são injetados (via [`peft`](https://github.com/huggingface/peft)) nas projeções de atenção e treinados junto com a cabeça `Linear + Softmax`.
+
+Os dois modelos usam os mesmos alvos padrão do LoRA, com o mesmo número de parâmetros nos adaptadores. A cabeça difere em um ponto: no BAT, ela tem uma `LayerNorm` antes da camada linear (veja [Implementação do BAT](#implementação-do-bat)).
 
 ## Formato dos dados
 
@@ -45,51 +52,52 @@ winget install "FFmpeg (Shared)"
 
 ```powershell
 uv sync
-uv run python -m ast_finetuning.train --dataset fma_small --data-dir datasets --metadata datasets/fma_tracks.csv --epochs 30 --batch-size 16
-uv run python -m ast_finetuning.train --dataset gtzan --data-dir datasets --epochs 30 --batch-size 16
+uv run python -m mgc_finetuning.train --dataset fma_small --data-dir datasets --metadata datasets/fma_tracks.csv --epochs 30 --batch-size 16
+uv run python -m mgc_finetuning.train --model bat --dataset gtzan --data-dir datasets --epochs 30 --batch-size 16
 ```
 
-O PyTorch e o TorchAudio são obtidos do índice CUDA 13.0 configurado no `pyproject.toml`. O melhor checkpoint fica em `checkpoints/ast-{dataset}-{finetuning}` (por exemplo `checkpoints/ast-gtzan-lora`), a menos que `--output-dir` seja informado, de modo que os modelos de cada dataset e metodologia não se sobrescrevem. A cada época, as losses e acurácias de treino e validação são impressas e registradas em `history.csv` dentro dessa pasta. O treino imprime também a quantidade de parâmetros treináveis; no modo `head`, imprime a lista deles, que deve conter apenas `classifier.weight` e `classifier.bias`.
+O PyTorch e o TorchAudio são obtidos do índice CUDA 13.0 configurado no `pyproject.toml`. O melhor checkpoint fica em `checkpoints/{model}-{dataset}-{finetuning}` (por exemplo `checkpoints/bat-gtzan-lora`), a menos que `--output-dir` seja informado, de modo que os modelos de cada arquitetura, dataset e metodologia não se sobrescrevem. A cada época, as losses e acurácias de treino e validação são impressas e registradas em `history.csv` dentro dessa pasta. O treino imprime também a quantidade de parâmetros treináveis; no modo `head`, imprime a lista deles, que deve conter apenas os parâmetros da cabeça (`classifier.*` e, no BAT, também `head_norm.*`).
 
 O treino roda por até 30 épocas (`--epochs`) e usa early stopping: se a `validation_loss` não diminuir em 3 épocas seguidas (`--early-stopping-patience`), o treino é interrompido. Use `--early-stopping-patience 0` para desativar. O checkpoint salvo continua sendo o da época de maior acurácia de validação.
 
 Para classificar um arquivo com um checkpoint treinado:
 
 ```powershell
-uv run python -m ast_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --checkpoint checkpoints/ast-gtzan-head
+uv run python -m mgc_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --checkpoint checkpoints/ast-gtzan-head
 ```
 
 ### Argumentos
 
-`ast_finetuning.train`:
+`mgc_finetuning.train`:
 
 | Flag | Padrão | Descrição |
 | --- | --- | --- |
+| `--model` | `ast` | Modelo pré-treinado: `ast` (Audio Spectrogram Transformer) ou `bat` (Better Audio Transformer). |
 | `--dataset` | `fma_small` | Dataset de treino: `fma_small`, `fma_medium` ou `gtzan`. Cada dataset gera um modelo separado. |
 | `--data-dir` | `datasets` | Pasta raiz dos datasets (contém `fma_small/`, `fma_medium/` e `GTZAN/`). |
 | `--metadata` | `datasets/fma_tracks.csv` | CSV de metadados do FMA. Ignorado no GTZAN. |
-| `--output-dir` | `checkpoints/ast-{dataset}-{finetuning}` | Pasta onde o melhor checkpoint, o `history.csv` e as métricas são salvos. |
-| `--model-name` | `MIT/ast-finetuned-audioset-10-10-0.4593` | Checkpoint pré-treinado do AST no Hugging Face. |
+| `--output-dir` | `checkpoints/{model}-{dataset}-{finetuning}` | Pasta onde o melhor checkpoint, o `history.csv` e as métricas são salvos. |
+| `--model-name` | repositório oficial de `--model` | Repositório do Hugging Face com os pesos pré-treinados. |
 | `--pitch-shift-semitones` | `-1 1` | Deslocamentos de pitch, em semitons, usados como augmentation no treino do GTZAN. Passe a flag sem valores para desativar. Ignorado no FMA. |
 | `--epochs` | `30` | Número máximo de épocas. |
 | `--early-stopping-patience` | `3` | Épocas seguidas sem redução da `validation_loss` antes de interromper o treino. `0` desativa. |
 | `--batch-size` | `16` | Tamanho do batch de treino e validação. |
 | `--finetuning` | `head` | Metodologia de ajuste fino: `head` (backbone congelado) ou `lora`. |
-| `--learning-rate` | `1e-4` | Learning rate do AdamW para os parâmetros treináveis (cabeça e, com LoRA, os adaptadores). |
+| `--learning-rate` | `1e-4` no AST, `1e-3` no BAT | Learning rate do AdamW para os parâmetros treináveis (cabeça e, com LoRA, os adaptadores). |
 | `--lora-rank` | `1` | Rank `r` das matrizes LoRA `A` e `B`. Só com `--finetuning lora`. |
 | `--lora-alpha` | `2` | Escala `alpha` do LoRA; a atualização é multiplicada por `alpha / r`. Só com `--finetuning lora`. |
 | `--lora-dropout` | `0.2` | Dropout aplicado na entrada dos adaptadores LoRA. Só com `--finetuning lora`. |
-| `--lora-target-modules` | `q_proj v_proj` | Camadas lineares do AST que recebem adaptadores: `q_proj`, `k_proj`, `v_proj`, `o_proj` (atenção) e `fc1`, `fc2` (MLP). Só com `--finetuning lora`. |
+| `--lora-target-modules` | `q_proj v_proj` | Camadas lineares que recebem adaptadores: `q_proj`, `k_proj`, `v_proj`, `o_proj` (atenção) e `fc1`, `fc2` (MLP) nos dois modelos, e `gate` só no BAT. Só com `--finetuning lora`. |
 | `--seed` | `1337` | Semente aleatória do Python e do PyTorch. |
 
-`ast_finetuning.predict`:
+`mgc_finetuning.predict`:
 
 | Argumento | Padrão | Descrição |
 | --- | --- | --- |
 | `audio` (posicional) | obrigatório | Arquivo de áudio a ser classificado. |
 | `--checkpoint` | obrigatório | Pasta do checkpoint gerado pelo treino, por exemplo `checkpoints/ast-gtzan-head`. |
 
-`ast_finetuning.plot`:
+`mgc_finetuning.plot`:
 
 | Flag | Padrão | Descrição |
 | --- | --- | --- |
@@ -110,10 +118,10 @@ As métricas macro-averaged são a média simples das métricas por classe, de m
 
 ### Figuras
 
-O script `ast_finetuning.plot` lê os CSVs de um checkpoint e gera as figuras em PDF, com textos em inglês, prontas para trabalhos acadêmicos:
+O script `mgc_finetuning.plot` lê os CSVs de um checkpoint e gera as figuras em PDF, com textos em inglês, prontas para trabalhos acadêmicos:
 
 ```powershell
-uv run python -m ast_finetuning.plot --checkpoint checkpoints/ast-gtzan-lora
+uv run python -m mgc_finetuning.plot --checkpoint checkpoints/ast-gtzan-lora
 ```
 
 | Arquivo | Conteúdo |
@@ -129,11 +137,29 @@ As curvas marcam a época do checkpoint salvo (melhor acurácia de validação).
 ### Ajuste fino com LoRA
 
 ```powershell
-uv run python -m ast_finetuning.train --dataset gtzan --data-dir datasets --finetuning lora
+uv run python -m mgc_finetuning.train --model bat --dataset gtzan --data-dir datasets --finetuning lora
 ```
 
-Os hiperparâmetros do LoRA (`--lora-rank`, `--lora-alpha`, `--lora-dropout` e `--lora-target-modules`) estão descritos em [Argumentos](#argumentos). Com os valores padrão e as 8 classes do FMA-Small, 43.016 parâmetros são treinados (≈0,05% do modelo). No modo `lora` o backbone fica em modo de treino para que o dropout dos adaptadores seja aplicado. A metodologia e os hiperparâmetros do LoRA são salvos no `config.json` do checkpoint, de modo que o `predict` reconstrói o modelo correto sem flags adicionais.
+Os hiperparâmetros do LoRA (`--lora-rank`, `--lora-alpha`, `--lora-dropout` e `--lora-target-modules`) estão descritos em [Argumentos](#argumentos). Com os valores padrão e as 8 classes do FMA-Small, são treinados 43.016 parâmetros no AST e 44.552 no BAT (≈0,05% do modelo); a diferença é a `LayerNorm` da cabeça do BAT. No modo `lora` o backbone fica em modo de treino para que o dropout dos adaptadores seja aplicado. A metodologia e os hiperparâmetros do LoRA são salvos no `config.json` do checkpoint, de modo que o `predict` reconstrói o modelo correto sem flags adicionais.
 
 ## Pré-processamento
 
-Durante o treinamento e a avaliação, os datasets retornam diretamente o espectrograma Mel, nunca a forma de onda. A extração usa o mesmo `torchaudio.compliance.kaldi.fbank` do AST original: 128 bins, hop de 10 ms, janela Hanning de 25 ms, pré-ênfase, remoção de offset DC e FFT de 512 pontos. O log-Mel é normalizado de acordo com o `ASTFeatureExtractor` e ajustado para 1024 frames, o tamanho esperado pelo AST. O treino usa recorte aleatório como augmentation; validação e inferência usam recorte determinístico.
+Durante o treinamento e a avaliação, os datasets retornam diretamente o espectrograma Mel, nunca a forma de onda. Cada modelo usa o pré-processamento com que seus pesos foram treinados, e o `--model` seleciona o correto:
+
+| | AST | BAT |
+| --- | --- | --- |
+| Extração | `torchaudio.compliance.kaldi.fbank` | `torchaudio.transforms.MelSpectrogram` |
+| Bins Mel e hop | 128 bins, 10 ms | 128 bins, 10 ms |
+| Janela | Hanning de 25 ms, FFT de 512 pontos | Hann de 64 ms, FFT de 1024 pontos |
+| Outros passos | Pré-ênfase, remoção de offset DC | Conversão para dB com `top_db=80` |
+| Normalização | Média e desvio do `ASTFeatureExtractor` | Min-max por amostra, para o intervalo [0, 1] |
+
+Nos dois casos, a entrada tem 1024 frames, cerca de 10 s das faixas de 30 s. O treino usa recorte aleatório como augmentation; validação e inferência usam recorte determinístico. No BAT, a normalização é calculada depois do recorte, porque os pesos foram treinados em clipes de 10 s normalizados sobre toda a entrada.
+
+## Implementação do BAT
+
+O encoder fica em `src/mgc_finetuning/bat.py`, adaptado do [repositório oficial](https://github.com/houtan-ghaffari/BAT_ICML2026) (licença MIT), e os pesos são carregados diretamente do `model.safetensors`, sem `trust_remote_code`. A camada `qkv` original é separada em `q_proj`, `k_proj` e `v_proj`, e `attn.proj` passa a se chamar `o_proj`. Essas mudanças não alteram as saídas e permitem aplicar o LoRA nas mesmas camadas do AST.
+
+As features do token CLS do BAT têm escala muito menor que as do AST (norma L2 média de 0,15 contra 35,6 no GTZAN), e uma camada linear aplicada diretamente sobre elas quase não aprende. Por isso, a cabeça do BAT é `LayerNorm + Dropout + Linear`, como nas configurações oficiais de linear probing e finetuning (`head_norm: true`). Mesmo assim, o BAT aprende bem mais devagar que o AST com learning rate de `1e-4`, então o padrão dele é `1e-3`, o mesmo das configurações oficiais de linear probing. Para comparar os modelos com o mesmo valor, informe `--learning-rate` explicitamente.
+
+Se usar o BAT em um trabalho, cite o artigo [BAT: Better Audio Transformer Guided by Convex Gated Probing](https://arxiv.org/abs/2602.16305) (ICML 2026).

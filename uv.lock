@@ -788,16 +788,18 @@ wheels = [
 ]
 
 [[package]]
-name = "mgr-ast-finetuning"
+name = "mgc-finetuning"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "huggingface-hub" },
     { name = "ipykernel" },
     { name = "matplotlib" },
     { name = "peft" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "safetensors" },
     { name = "scikit-learn" },
     { name = "torch" },
     { name = "torchaudio" },
@@ -808,11 +810,13 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.10.1" },
+    { name = "huggingface-hub", specifier = ">=1.33.0" },
     { name = "ipykernel", specifier = ">=7.1.0" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "peft", specifier = ">=0.21.2" },
     { name = "polars", specifier = ">=1.34.0" },
     { name = "pyarrow", specifier = ">=21.0.0" },
+    { name = "safetensors", specifier = ">=0.8.0" },
     { name = "scikit-learn", specifier = ">=1.9.1" },
     { name = "torch", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchaudio", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },

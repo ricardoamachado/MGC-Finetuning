@@ -6,10 +6,9 @@ from pathlib import Path
 
 import torch
 import torchaudio
-from transformers import ASTFeatureExtractor
 
-from .data import ASTMelSpectrogram
-from .model import ASTFineTuner
+from .data import build_mel_transform
+from .model import FINETUNER_CLASSES, checkpoint_model
 
 
 def main() -> None:
@@ -19,18 +18,14 @@ def main() -> None:
         "--checkpoint",
         type=Path,
         required=True,
-        help="Pasta do checkpoint, ex.: checkpoints/ast-gtzan-head ou checkpoints/ast-fma_small-lora.",
+        help="Pasta do checkpoint, ex.: checkpoints/ast-gtzan-head ou checkpoints/bat-fma_small-lora.",
     )
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     labels = json.loads((args.checkpoint / "labels.json").read_text(encoding="utf-8"))
-    extractor = ASTFeatureExtractor.from_pretrained(args.checkpoint)
-    mel_transform = ASTMelSpectrogram(
-        mean=extractor.mean,
-        std=extractor.std,
-        is_training=False,
-    )
-    model = ASTFineTuner.from_pretrained(args.checkpoint, num_labels=len(labels)).to(device).eval()
+    model_key = checkpoint_model(args.checkpoint)
+    mel_transform = build_mel_transform(model_key, args.checkpoint, is_training=False)
+    model = FINETUNER_CLASSES[model_key].from_pretrained(args.checkpoint, num_labels=len(labels)).to(device).eval()
     waveform, sample_rate = torchaudio.load(args.audio)
     mel_spectrogram = mel_transform(waveform, sample_rate).unsqueeze(0)
     with torch.no_grad():

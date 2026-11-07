@@ -98,6 +98,75 @@ class ASTMelSpectrogram(torch.nn.Module):
         return log_mel.contiguous()
 
 
+class BATMelSpectrogram(torch.nn.Module):
+    """Convert waveforms using the log-mel preprocessing BAT was pretrained with.
+
+    The pretrained weights expect a 1024-point Hann STFT, power-to-dB compression (top_db=80) and
+    per-sample min-max normalization to [0, 1], unlike the 25 ms Kaldi fbank used by AST.
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = 16_000,
+        n_fft: int = 1024,
+        hop_length: int = 160,
+        n_mels: int = 128,
+        top_db: float = 80.0,
+        target_frames: int = 1024,
+        is_training: bool = True,
+    ):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.target_frames = target_frames
+        self.is_training = is_training
+        self.mel = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels
+        )
+        self.to_db = torchaudio.transforms.AmplitudeToDB("power", top_db=top_db)
+
+    def forward(
+        self, waveform: torch.Tensor, source_sample_rate: int
+    ) -> torch.Tensor:
+        if waveform.ndim > 1:
+            waveform = waveform.mean(dim=0)
+        if source_sample_rate != self.sample_rate:
+            waveform = torchaudio.functional.resample(
+                waveform, source_sample_rate, self.sample_rate
+            )
+
+        mel = self.mel(waveform)  # [n_mels, frames]
+
+        # BAT was pretrained on 10 s clips normalized over the whole input, so longer tracks are
+        # cropped before the dB reference and the min-max range are computed.
+        total_frames = mel.shape[1]
+        if total_frames > self.target_frames:
+            start = (
+                torch.randint(0, total_frames - self.target_frames + 1, (1,)).item()
+                if self.is_training
+                else 0
+            )
+            mel = mel[:, start : start + self.target_frames]
+
+        log_mel = self.to_db(mel)
+        minimum, maximum = log_mel.aminmax()
+        log_mel = (log_mel - minimum) / (maximum - minimum + 1e-8)
+        if total_frames < self.target_frames:
+            log_mel = torch.nn.functional.pad(log_mel, (0, self.target_frames - total_frames))
+
+        # Return [target_frames, n_mels] -> [1024, 128].
+        return log_mel.T.contiguous()
+
+
+def build_mel_transform(
+    model: str, pretrained_path: str | Path, is_training: bool
+) -> torch.nn.Module:
+    """Create the waveform-to-spectrogram transform expected by a pretrained model."""
+    if model == "bat":
+        return BATMelSpectrogram(is_training=is_training)
+    extractor = ASTFeatureExtractor.from_pretrained(pretrained_path)
+    return ASTMelSpectrogram(mean=extractor.mean, std=extractor.std, is_training=is_training)
+
+
 def build_manifest(
     dataset_dir: Path, metadata_path: Path | None = None) -> tuple[pl.DataFrame, list[str]]:
     """Build a path/label manifest from folders or a CSV/Parquet metadata file."""

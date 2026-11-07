@@ -41,16 +41,13 @@ Data Augmentation - APENAS GTZAN: Pitch shift de meio tom para baixo e meio tom 
 Caminho: Todos os datasets estarão localizados na pasta /datasets/ dentro da raiz do projeto.
 
 Representação do sinal de áudio: O sinal de áudio deve ser transformado num Mel Espectrograma com 128 bins de frequência, hop size de 10 ms e janelamento por Hamming com comprimento de 25 ms.
-por
-Modelo Pré-treinado a ser utilizado: https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593. Audio Spectrogram Transformer (AST).
+
+Modelos Pré-treinados a ser utilizado: 
+
+1) https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593. Audio Spectrogram Transformer (AST).
+2) https://huggingface.co/lrauch/BAT-vit-b16-pretrainedAS2M. Better Audio Transformer (BAT).
 
 4. Idioma
 
 Os comentários e a documentação do código (docstrings) podem ser escritos em Inglês. O feedback para o usuário deve ser escrito em português.
 
-5. Para executar o projeto.
-
-uv run python -m ast_finetuning.train `
-  --dataset fma_small `
-  --data-dir datasets `
-  --metadata datasets/fma_tracks.csv

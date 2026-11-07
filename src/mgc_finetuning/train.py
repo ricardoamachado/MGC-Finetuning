@@ -10,9 +10,15 @@ import torch
 from torch.utils.data import DataLoader, default_collate
 from transformers import ASTFeatureExtractor
 
-from .data import ASTMelSpectrogram, FMADataset, GTZANDataset
+from .data import FMADataset, GTZANDataset, build_mel_transform
 from .metrics import macro_metrics, save_best_epoch_metrics
-from .model import DEFAULT_LORA_TARGET_MODULES, FINETUNING_METHODS, ASTFineTuner
+from .model import (
+    DEFAULT_LEARNING_RATES,
+    DEFAULT_LORA_TARGET_MODULES,
+    DEFAULT_MODEL_NAMES,
+    FINETUNER_CLASSES,
+    FINETUNING_METHODS,
+)
 
 
 def _prepare_batch(batch: object, device: torch.device) -> dict[str, torch.Tensor]:
@@ -31,7 +37,13 @@ def _prepare_batch(batch: object, device: torch.device) -> dict[str, torch.Tenso
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Ajuste fino do AST em arquivos de áudio locais.")
+    parser = argparse.ArgumentParser(description="Ajuste fino de transformers de áudio para classificação de gêneros musicais.")
+    parser.add_argument(
+        "--model",
+        choices=sorted(FINETUNER_CLASSES),
+        default="ast",
+        help="Modelo pré-treinado: 'ast' (Audio Spectrogram Transformer) ou 'bat' (Better Audio Transformer).",
+    )
     parser.add_argument(
         "--dataset",
         choices=["fma_small", "fma_medium", "gtzan"],
@@ -49,9 +61,13 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=None,
-        help="Pasta do checkpoint. Padrão: checkpoints/ast-{dataset}-{finetuning}.",
+        help="Pasta do checkpoint. Padrão: checkpoints/{model}-{dataset}-{finetuning}.",
     )
-    parser.add_argument("--model-name", default="MIT/ast-finetuned-audioset-10-10-0.4593")
+    parser.add_argument(
+        "--model-name",
+        default=None,
+        help="Repositório do Hugging Face com os pesos pré-treinados. Padrão: o repositório oficial de --model.",
+    )
     parser.add_argument(
         "--pitch-shift-semitones",
         type=int,
@@ -85,8 +101,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--learning-rate",
         type=float,
-        default=1e-4,
-        help="Learning rate dos parâmetros treináveis (cabeça classificadora e, com LoRA, os adaptadores).",
+        default=None,
+        help=(
+            "Learning rate dos parâmetros treináveis (cabeça classificadora e, com LoRA, os adaptadores). "
+            "Padrão: 1e-4 no AST e 1e-3 no BAT."
+        ),
     )
     parser.add_argument("--lora-rank", type=int, default=1, help="Rank r das matrizes LoRA.")
     parser.add_argument("--lora-alpha", type=int, default=2, help="Fator de escala alpha do LoRA.")
@@ -99,8 +118,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=1337)
     args = parser.parse_args()
+    if args.model_name is None:
+        args.model_name = DEFAULT_MODEL_NAMES[args.model]
+    if args.learning_rate is None:
+        args.learning_rate = DEFAULT_LEARNING_RATES[args.model]
     if args.output_dir is None:
-        args.output_dir = Path("checkpoints") / f"ast-{args.dataset}-{args.finetuning}"
+        args.output_dir = Path("checkpoints") / f"{args.model}-{args.dataset}-{args.finetuning}"
     return args
 
 
@@ -109,17 +132,8 @@ def main() -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    extractor = ASTFeatureExtractor.from_pretrained(args.model_name)
-    train_mel_transform = ASTMelSpectrogram(
-        mean=extractor.mean,
-        std=extractor.std,
-        is_training=True,
-    )
-    validation_mel_transform = ASTMelSpectrogram(
-        mean=extractor.mean,
-        std=extractor.std,
-        is_training=False,
-    )
+    train_mel_transform = build_mel_transform(args.model, args.model_name, is_training=True)
+    validation_mel_transform = build_mel_transform(args.model, args.model_name, is_training=False)
     if args.dataset.startswith("fma_"):
         fma_subset = args.dataset.removeprefix("fma_")
         train_set = FMADataset(
@@ -155,6 +169,7 @@ def main() -> None:
     if len(val_set) == 0:
         raise ValueError(f"O conjunto de validação do {args.dataset.upper()} está vazio.")
     print(
+        f"model={args.model} "
         f"dataset={args.dataset} "
         f"train_samples={len(train_set)} "
         f"validation_samples={len(val_set)} "
@@ -166,7 +181,7 @@ def main() -> None:
     )
     val_loader = DataLoader(val_set, batch_size=args.batch_size, num_workers=0)
 
-    model = ASTFineTuner.from_backbone(
+    model = FINETUNER_CLASSES[args.model].from_backbone(
         args.model_name,
         num_labels=len(labels),
         finetuning_method=args.finetuning,
@@ -184,6 +199,7 @@ def main() -> None:
     total_parameter_count = sum(parameter.numel() for parameter in model.parameters())
     print(
         f"finetuning={args.finetuning} "
+        f"learning_rate={args.learning_rate:g} "
         f"trainable_parameters={trainable_parameter_count} "
         f"total_parameters={total_parameter_count} "
         f"trainable_ratio={trainable_parameter_count / total_parameter_count:.4%}"
@@ -194,6 +210,8 @@ def main() -> None:
         (parameter for _, parameter in trainable_parameters),
         lr=args.learning_rate,
     )
+    # predict.py reads AST's normalization statistics from the checkpoint; BAT has none.
+    extractor = ASTFeatureExtractor.from_pretrained(args.model_name) if args.model == "ast" else None
     best_accuracy = -1.0
     best_val_loss = float("inf")
     epochs_without_improvement = 0
@@ -261,7 +279,8 @@ def main() -> None:
             best_accuracy = val_accuracy
             save_best_epoch_metrics(args.output_dir, epoch, y_true, y_pred, labels)
             model.save_pretrained(args.output_dir)
-            extractor.save_pretrained(args.output_dir)
+            if extractor is not None:
+                extractor.save_pretrained(args.output_dir)
             (args.output_dir / "labels.json").write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
 
         if val_loss < best_val_loss:
