@@ -40,7 +40,33 @@ Data Augmentation - APENAS GTZAN: Pitch shift de meio tom para baixo e meio tom 
 
 Caminho: Todos os datasets estarão localizados na pasta /datasets/ dentro da raiz do projeto.
 
-Representação do sinal de áudio: O sinal de áudio deve ser transformado num Mel Espectrograma com 128 bins de frequência, hop size de 10 ms e janelamento por Hamming com comprimento de 25 ms.
+Representação do sinal de áudio: O sinal de áudio deve ser transformado num Mel Espectrograma com a mesma extração usada no treinamento dos pesos de cada modelo. As representações não são intercambiáveis, pois os pesos pré-treinados dependem delas. A implementação está em `src/mgc_finetuning/data.py`.
+
+Comum aos dois modelos:
+
+- Entrada: áudio mono, reamostrado para 16 kHz.
+- 128 bins de frequência e hop size de 10 ms (160 amostras).
+- Saída com 1024 frames x 128 bins, o que corresponde a 10,24 s de áudio.
+- Faixas mais longas: recorte aleatório no treino e primeiros 1024 frames na validação e na inferência.
+- Faixas mais curtas: padding com zeros no final.
+
+AST (`ASTMelSpectrogram`):
+
+- Extração: `torchaudio.compliance.kaldi.fbank`.
+- Janela: Hanning com comprimento de 25 ms (400 amostras) e FFT de 512 pontos.
+- Pré-processamento do sinal: pré-ênfase de 0,97 e remoção de offset DC, sem dither.
+- Banco Mel: de 20 Hz a 8 kHz.
+- Compressão: logaritmo natural da energia em cada bin.
+- Normalização: (log_mel - média) / (2 * desvio padrão), com média -4,2677393 e desvio padrão 4,5689974, lidos do `ASTFeatureExtractor`. É aplicada depois do recorte ou do padding.
+
+BAT (`BATMelSpectrogram`):
+
+- Extração: `torchaudio.transforms.MelSpectrogram`.
+- Janela: Hann com comprimento de 64 ms (1024 amostras), FFT de 1024 pontos, com frames centralizados e padding por reflexão.
+- Pré-processamento do sinal: sem pré-ênfase e sem remoção de offset DC.
+- Banco Mel: escala HTK, de 0 Hz a 8 kHz.
+- Compressão: espectro de potência convertido para dB com `AmplitudeToDB`, usando top_db=80.
+- Normalização: min-max por amostra para o intervalo [0, 1]. A conversão para dB e a normalização são aplicadas depois do recorte e antes do padding, pois os pesos foram treinados com clipes de 10 s normalizados sobre toda a entrada.
 
 Modelos Pré-treinados a ser utilizado: 
 
