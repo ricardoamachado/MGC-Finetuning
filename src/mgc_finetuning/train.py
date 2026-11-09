@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--early-stopping-patience",
         type=int,
-        default=3,
+        default=6,
         help=(
             "Interrompe o treino após esse número de épocas seguidas sem redução da validation_loss; "
             "use 0 para desativar."

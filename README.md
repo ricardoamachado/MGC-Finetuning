@@ -58,7 +58,7 @@ uv run python -m mgc_finetuning.train --model bat --dataset gtzan --data-dir dat
 
 O PyTorch e o TorchAudio são obtidos do índice CUDA 13.0 configurado no `pyproject.toml`. O melhor checkpoint fica em `checkpoints/{model}-{dataset}-{finetuning}` (por exemplo `checkpoints/bat-gtzan-lora`), a menos que `--output-dir` seja informado, de modo que os modelos de cada arquitetura, dataset e metodologia não se sobrescrevem. A cada época, as losses e acurácias de treino e validação são impressas e registradas em `history.csv` dentro dessa pasta. O treino imprime também a quantidade de parâmetros treináveis; no modo `head`, imprime a lista deles, que deve conter apenas os parâmetros da cabeça (`classifier.*` e, no BAT, também `head_norm.*`).
 
-O treino roda por até 30 épocas (`--epochs`) e usa early stopping: se a `validation_loss` não diminuir em 3 épocas seguidas (`--early-stopping-patience`), o treino é interrompido. Use `--early-stopping-patience 0` para desativar. O checkpoint salvo continua sendo o da época de maior acurácia de validação.
+O treino roda por até 30 épocas (`--epochs`) e usa early stopping: se a `validation_loss` não diminuir em 6 épocas seguidas (`--early-stopping-patience`), o treino é interrompido. Use `--early-stopping-patience 0` para desativar. O checkpoint salvo continua sendo o da época de maior acurácia de validação.
 
 Para classificar um arquivo com um checkpoint treinado:
 
@@ -80,7 +80,7 @@ uv run python -m mgc_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --che
 | `--model-name` | repositório oficial de `--model` | Repositório do Hugging Face com os pesos pré-treinados. |
 | `--pitch-shift-semitones` | `-1 1` | Deslocamentos de pitch, em semitons, usados como augmentation no treino do GTZAN. Passe a flag sem valores para desativar. Ignorado no FMA. |
 | `--epochs` | `30` | Número máximo de épocas. |
-| `--early-stopping-patience` | `3` | Épocas seguidas sem redução da `validation_loss` antes de interromper o treino. `0` desativa. |
+| `--early-stopping-patience` | `6` | Épocas seguidas sem redução da `validation_loss` antes de interromper o treino. `0` desativa. |
 | `--batch-size` | `16` | Tamanho do batch de treino e validação. |
 | `--finetuning` | `head` | Metodologia de ajuste fino: `head` (backbone congelado) ou `lora`. |
 | `--learning-rate` | `1e-4` no AST, `1e-3` no BAT | Learning rate do AdamW para os parâmetros treináveis (cabeça e, com LoRA, os adaptadores). |
