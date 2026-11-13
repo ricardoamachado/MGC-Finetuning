@@ -66,6 +66,17 @@ Para classificar um arquivo com um checkpoint treinado:
 uv run python -m mgc_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --checkpoint checkpoints/ast-gtzan-head
 ```
 
+A saída é um JSON com o gênero previsto (`label` e `probability`) e, em `top_k`, os 3 gêneros mais prováveis em ordem decrescente de probabilidade (`--top-k` muda a quantidade).
+
+Para prever em lote todas as faixas do split de teste de um dataset, use `--dataset` no lugar do arquivo. O checkpoint precisa ter sido treinado no mesmo dataset:
+
+```powershell
+uv run python -m mgc_finetuning.predict --dataset gtzan --checkpoint checkpoints/ast-gtzan-head
+uv run python -m mgc_finetuning.predict --dataset fma_small --checkpoint checkpoints/bat-fma_small-lora
+```
+
+O resultado é salvo em `{checkpoint}/predictions_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 3. O script também imprime a acurácia top-1 e top-3 do split. Arquivos ilegíveis são ignorados com um aviso.
+
 ### Argumentos
 
 `mgc_finetuning.train`:
@@ -94,8 +105,15 @@ uv run python -m mgc_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --che
 
 | Argumento | Padrão | Descrição |
 | --- | --- | --- |
-| `audio` (posicional) | obrigatório | Arquivo de áudio a ser classificado. |
+| `audio` (posicional) | — | Arquivo de áudio a ser classificado. Obrigatório se `--dataset` não for informado. |
 | `--checkpoint` | obrigatório | Pasta do checkpoint gerado pelo treino, por exemplo `checkpoints/ast-gtzan-head`. |
+| `--top-k` | `3` | Quantidade de gêneros mais prováveis reportados. |
+| `--dataset` | — | Modo em lote: `fma_small`, `fma_medium` ou `gtzan`. Substitui o arquivo de áudio. |
+| `--split` | `test` | Split previsto no modo em lote: `train`, `validation` ou `test`. |
+| `--data-dir` | `datasets` | Pasta raiz dos datasets. Só no modo em lote. |
+| `--metadata` | `datasets/fma_tracks.csv` | CSV de metadados do FMA. Só no modo em lote com o FMA. |
+| `--output` | `{checkpoint}/predictions_{dataset}_{split}.csv` | CSV com as predições do modo em lote. |
+| `--batch-size` | `16` | Tamanho do batch do modo em lote. |
 
 `mgc_finetuning.plot`:
 
