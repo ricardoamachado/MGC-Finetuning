@@ -75,7 +75,25 @@ uv run python -m mgc_finetuning.predict --dataset gtzan --checkpoint checkpoints
 uv run python -m mgc_finetuning.predict --dataset fma_small --checkpoint checkpoints/bat-fma_small-lora
 ```
 
-O resultado é salvo em `{checkpoint}/predictions_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 3. O script também imprime a acurácia top-1 e top-3 do split. Arquivos ilegíveis são ignorados com um aviso.
+O resultado é salvo em `predictions/{nome do checkpoint}_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 3. O script também imprime a acurácia top-1 e top-3 do split. Arquivos ilegíveis são ignorados com um aviso.
+
+### Recomendação de faixas por gênero
+
+O script interativo `recommend` lê um CSV de `predictions/` e lista todas as faixas em que um gênero aparece no top-3 com probabilidade maior ou igual a um threshold:
+
+```powershell
+uv run python -m mgc_finetuning.recommend
+```
+
+O script pede o CSV (se houver mais de um), o gênero (nome ou número da lista) e o threshold (aceita `0.4` ou `0,4`). Em seguida, mostra as faixas ordenadas pela probabilidade, com as colunas `track_id`, `path`, `true_genre` (gênero real), `rank` (posição do gênero no top-3 da faixa) e `probability`. Por fim, pergunta se a lista deve ser salva em `predictions/recommendations/`. As buscas se repetem até que o gênero ou o threshold fiquem em branco.
+
+Para uso sem interação, informe o gênero e o threshold:
+
+```powershell
+uv run python -m mgc_finetuning.recommend --predictions predictions/ast-gtzan-head_gtzan_test.csv --genre blues --threshold 0.4 --output blues.csv
+```
+
+Como o CSV guarda só o top-3, qualquer gênero fora dele tem probabilidade de no máximo 0,25. Assim, a lista é completa para thresholds acima de 0,25. Com thresholds menores, o script avisa que faixas podem ter ficado de fora.
 
 ### Argumentos
 
@@ -112,8 +130,18 @@ O resultado é salvo em `{checkpoint}/predictions_{dataset}_{split}.csv`, com um
 | `--split` | `test` | Split previsto no modo em lote: `train`, `validation` ou `test`. |
 | `--data-dir` | `datasets` | Pasta raiz dos datasets. Só no modo em lote. |
 | `--metadata` | `datasets/fma_tracks.csv` | CSV de metadados do FMA. Só no modo em lote com o FMA. |
-| `--output` | `{checkpoint}/predictions_{dataset}_{split}.csv` | CSV com as predições do modo em lote. |
+| `--output` | `predictions/{nome do checkpoint}_{dataset}_{split}.csv` | CSV com as predições do modo em lote. |
 | `--batch-size` | `16` | Tamanho do batch do modo em lote. |
+
+`mgc_finetuning.recommend`:
+
+| Flag | Padrão | Descrição |
+| --- | --- | --- |
+| `--predictions` | escolha interativa | CSV de predições gerado pelo `predict --dataset`. |
+| `--predictions-dir` | `predictions` | Pasta em que os CSVs de predições são procurados. |
+| `--genre` | pergunta interativamente | Gênero buscado (sem diferenciar maiúsculas e minúsculas). |
+| `--threshold` | pergunta interativamente | Probabilidade mínima, entre 0 e 1. |
+| `--output` | — | CSV de saída quando `--genre` e `--threshold` são informados. |
 
 `mgc_finetuning.plot`:
 

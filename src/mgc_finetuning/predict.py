@@ -14,6 +14,7 @@ from .data import FMADataset, GTZANDataset, build_mel_transform
 from .model import FINETUNER_CLASSES, checkpoint_model
 
 DATASETS = ("fma_small", "fma_medium", "gtzan")
+PREDICTIONS_DIR = Path("predictions")
 # GTZAN names the training split "train", while the FMA metadata uses "training".
 SPLIT_NAMES = {
     "gtzan": {"train": "train", "validation": "validation", "test": "test"},
@@ -59,7 +60,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="CSV de saída do modo em lote. Padrão: {checkpoint}/predictions_{dataset}_{split}.csv.",
+        help="CSV de saída do modo em lote. Padrão: predictions/{nome do checkpoint}_{dataset}_{split}.csv.",
     )
     parser.add_argument("--batch-size", type=int, default=16, help="Tamanho do batch do modo em lote.")
     args = parser.parse_args()
@@ -68,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     if args.top_k < 1:
         parser.error("--top-k deve ser pelo menos 1.")
     if args.output is None and args.dataset is not None:
-        args.output = args.checkpoint / f"predictions_{args.dataset}_{args.split}.csv"
+        args.output = PREDICTIONS_DIR / f"{args.checkpoint.resolve().name}_{args.dataset}_{args.split}.csv"
     return args
 
 
