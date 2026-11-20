@@ -10,7 +10,14 @@ import torch
 import torchaudio
 from torch.utils.data import Dataset
 
-from .data import FMADataset, GTZANDataset, build_mel_transform
+from .data import (
+    GTZAN_INDEX_URL,
+    FMADataset,
+    GTZANDataset,
+    build_mel_transform,
+    load_fma_track_info,
+    load_gtzan_track_info,
+)
 from .model import FINETUNER_CLASSES, checkpoint_model
 
 DATASETS = ("fma_small", "fma_medium", "gtzan")
@@ -36,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Pasta do checkpoint, ex.: checkpoints/ast-gtzan-head ou checkpoints/bat-fma_small-lora.",
     )
-    parser.add_argument("--top-k", type=int, default=3, help="Quantidade de gêneros mais prováveis a reportar.")
+    parser.add_argument("--top-k", type=int, default=5, help="Quantidade de gêneros mais prováveis a reportar.")
     parser.add_argument(
         "--dataset",
         choices=DATASETS,
@@ -55,6 +62,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("datasets/fma_tracks.csv"),
         help="CSV de metadados do FMA (ignorado no GTZAN).",
+    )
+    parser.add_argument(
+        "--gtzan-index",
+        type=Path,
+        default=None,
+        help=f"Índice de artistas e títulos do GTZAN ({GTZAN_INDEX_URL}). Padrão: {{data-dir}}/GTZAN/index.txt.",
     )
     parser.add_argument(
         "--output",
@@ -141,6 +154,23 @@ def build_dataset(
     return dataset, tracks
 
 
+def add_track_info(predictions: pl.DataFrame, args: argparse.Namespace) -> pl.DataFrame:
+    """Insert the ``artist`` and ``title`` of each track after ``track_id``; unknown values stay empty."""
+    if args.dataset == "gtzan":
+        index_path = args.gtzan_index or args.data_dir / "GTZAN" / "index.txt"
+        if index_path.is_file():
+            info = load_gtzan_track_info(index_path)
+        else:
+            print(f"aviso: {index_path} não encontrado; baixe-o de {GTZAN_INDEX_URL} para incluir artista e título.")
+            info = pl.DataFrame(schema={"track_id": pl.String, "artist": pl.String, "title": pl.String})
+    else:
+        info = load_fma_track_info(args.metadata)
+    info = info.unique("track_id", keep="first")  # Guards against repeated index entries.
+    predictions = predictions.join(info, on="track_id", how="left", maintain_order="left")
+    first = ["track_id", "artist", "title"]
+    return predictions.select(*first, pl.exclude(first))
+
+
 def predict_dataset(args: argparse.Namespace, device: torch.device) -> None:
     model, mel_transform, labels = load_checkpoint(args.checkpoint, device)
     dataset, tracks = build_dataset(args, labels, mel_transform)
@@ -175,15 +205,20 @@ def predict_dataset(args: argparse.Namespace, device: torch.device) -> None:
             flush()
     flush()
 
-    predictions = pl.DataFrame(rows)
+    predictions = add_track_info(pl.DataFrame(rows), args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     predictions.write_csv(args.output)
-    top1_accuracy = predictions.select((pl.col("genre") == pl.col("top1_genre")).mean()).item()
-    in_top_k = pl.any_horizontal(pl.col("genre") == pl.col(f"top{rank}_genre") for rank in range(1, top_k + 1))
-    top_k_accuracy = predictions.select(in_top_k.mean()).item()
+    accuracies = {
+        k: predictions.select(
+            pl.any_horizontal(pl.col("genre") == pl.col(f"top{rank}_genre") for rank in range(1, k + 1)).mean()
+        ).item()
+        for k in sorted({1, min(3, top_k), top_k})
+    }
+    unidentified = predictions.filter(pl.col("artist").is_null() & pl.col("title").is_null()).height
     print(
         f"dataset={args.dataset} split={args.split} tracks={predictions.height} skipped={len(skipped)} "
-        f"top1_accuracy={top1_accuracy:.4f} top{top_k}_accuracy={top_k_accuracy:.4f}"
+        f"unidentified_tracks={unidentified} "
+        + " ".join(f"top{k}_accuracy={accuracy:.4f}" for k, accuracy in accuracies.items())
     )
     print(f"predições salvas: {args.output}")
 

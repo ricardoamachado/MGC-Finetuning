@@ -26,6 +26,7 @@ datasets/
 │   ├── blues/blues.00000.wav
 │   ├── ...
 │   ├── rock/rock.00099.wav
+│   ├── index.txt                 # opcional: artista e título de cada faixa
 │   ├── train_stratified.txt
 │   ├── valid_stratified.txt
 │   └── test_stratified.txt
@@ -34,7 +35,9 @@ datasets/
 
 **FMA:** o `fma_tracks.csv` é usado para obter o gênero (`genre_top`) e a divisão oficial do FMA (coluna `split`). O treino usa `training` e a validação usa apenas `validation`; o split `test` fica reservado para o teste e não influencia a escolha da melhor época. No FMA-Small isso resulta em 6400 faixas de treino e 800 de validação, balanceadas entre os 8 gêneros. Os subconjuntos são aninhados (o `fma_medium` contém todas as faixas do `fma_small`), então `--dataset fma_medium` usa as 25.000 faixas da pasta `datasets/fma_medium/` (19.922 de treino e 2505 de validação). Use `--metadata` para informar outro caminho.
 
-**GTZAN:** não há arquivo de metadados; o gênero é o nome da pasta de cada faixa. O treino usa `train_stratified.txt` e a validação usa `valid_stratified.txt` (`test_stratified.txt` fica reservado para o teste). O arquivo `jazz/jazz.00054.wav`, corrompido na distribuição original do GTZAN, é detectado e ignorado automaticamente, deixando 499 faixas no treino.
+**GTZAN:** não há arquivo de metadados; o gênero é o nome da pasta de cada faixa. O treino usa `train_stratified.txt` e a validação usa `valid_stratified.txt` (`test_stratified.txt` fica reservado para o teste). Esses três arquivos de partição vêm do repositório [boblsturm/GTZAN](https://github.com/boblsturm/GTZAN), de Bob L. Sturm, que também traz partições *fault-filtered* (`*_filtered.txt`), não usadas aqui. O README desse repositório lista os trabalhos que usaram essas partições: Kereliuk, Sturm e Larsen, "Deep learning and music adversaries", *IEEE Transactions on Multimedia*, 17, 2015. Também lista a análise do dataset: Sturm, "The GTZAN dataset: Its contents, its faults, their effects on evaluation, and its future use", [arXiv:1306.1461](https://arxiv.org/abs/1306.1461), 2013. O arquivo `jazz/jazz.00054.wav`, corrompido na distribuição original do GTZAN, é detectado e ignorado automaticamente, deixando 499 faixas no treino.
+
+O `index.txt` do mesmo repositório ([link](https://github.com/boblsturm/GTZAN/blob/main/index.txt)) identifica o artista e o título de cada faixa do GTZAN. Ele é usado apenas pelo `predict` em lote, para incluir os nomes das músicas nas predições. Salve-o em `datasets/GTZAN/index.txt`. Segundo o próprio arquivo, ainda faltam informações de 17 faixas. Na versão atual, 15 faixas não têm artista nem título e 3 têm só um dos dois. Os campos desconhecidos ficam vazios. O `index.txt` pede que se cite Sturm, "The state of the art ten years after a state of the art: Future research in music information retrieval", *Journal of New Music Research*, 43(2), 147–172, 2014.
 
 ### Data augmentation do GTZAN
 
@@ -66,7 +69,7 @@ Para classificar um arquivo com um checkpoint treinado:
 uv run python -m mgc_finetuning.predict datasets/GTZAN/jazz/jazz.00000.wav --checkpoint checkpoints/ast-gtzan-head
 ```
 
-A saída é um JSON com o gênero previsto (`label` e `probability`) e, em `top_k`, os 3 gêneros mais prováveis em ordem decrescente de probabilidade (`--top-k` muda a quantidade).
+A saída é um JSON com o gênero previsto (`label` e `probability`) e, em `top_k`, os 5 gêneros mais prováveis em ordem decrescente de probabilidade (`--top-k` muda a quantidade).
 
 Para prever em lote todas as faixas do split de teste de um dataset, use `--dataset` no lugar do arquivo. O checkpoint precisa ter sido treinado no mesmo dataset:
 
@@ -75,17 +78,17 @@ uv run python -m mgc_finetuning.predict --dataset gtzan --checkpoint checkpoints
 uv run python -m mgc_finetuning.predict --dataset fma_small --checkpoint checkpoints/bat-fma_small-lora
 ```
 
-O resultado é salvo em `predictions/{nome do checkpoint}_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 3. O script também imprime a acurácia top-1 e top-3 do split. Arquivos ilegíveis são ignorados com um aviso.
+O resultado é salvo em `predictions/{nome do checkpoint}_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `artist` e `title` (nome real da música), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 5. No FMA, artista e título vêm do `fma_tracks.csv` (`artist.name` e `track.title`). No GTZAN, vêm do `index.txt` (veja [Formato dos dados](#formato-dos-dados)). Faixas não identificadas ficam com esses campos vazios. O script também imprime a acurácia top-1, top-3 e top-5 do split e a quantidade de faixas sem identificação. Arquivos ilegíveis são ignorados com um aviso.
 
 ### Recomendação de faixas por gênero
 
-O script interativo `recommend` lê um CSV de `predictions/` e lista todas as faixas em que um gênero aparece no top-3 com probabilidade maior ou igual a um threshold:
+O script interativo `recommend` lê um CSV de `predictions/` e lista todas as faixas em que um gênero aparece no top-5 com probabilidade maior ou igual a um threshold:
 
 ```powershell
 uv run python -m mgc_finetuning.recommend
 ```
 
-O script pede o CSV (se houver mais de um), o gênero (nome ou número da lista) e o threshold (aceita `0.4` ou `0,4`). Em seguida, mostra as faixas ordenadas pela probabilidade, com as colunas `track_id`, `path`, `true_genre` (gênero real), `rank` (posição do gênero no top-3 da faixa) e `probability`. Por fim, pergunta se a lista deve ser salva em `predictions/recommendations/`. As buscas se repetem até que o gênero ou o threshold fiquem em branco.
+O script pede o CSV (se houver mais de um), o gênero (nome ou número da lista) e o threshold (aceita `0.4` ou `0,4`). Em seguida, mostra as faixas ordenadas pela probabilidade, com as colunas `track_id`, `artist`, `title`, `true_genre` (gênero real), `rank` (posição do gênero no top-5 da faixa), `probability` e `path`. Faixas sem identificação aparecem como `(desconhecido)`. Por fim, pergunta se a lista deve ser salva em `predictions/recommendations/`. As buscas se repetem até que o gênero ou o threshold fiquem em branco.
 
 Para uso sem interação, informe o gênero e o threshold:
 
@@ -93,7 +96,7 @@ Para uso sem interação, informe o gênero e o threshold:
 uv run python -m mgc_finetuning.recommend --predictions predictions/ast-gtzan-head_gtzan_test.csv --genre blues --threshold 0.4 --output blues.csv
 ```
 
-Como o CSV guarda só o top-3, qualquer gênero fora dele tem probabilidade de no máximo 0,25. Assim, a lista é completa para thresholds acima de 0,25. Com thresholds menores, o script avisa que faixas podem ter ficado de fora.
+Como o CSV guarda só o top-5, qualquer gênero fora dele tem probabilidade de no máximo 1/6 (≈0,17). Assim, a lista é completa para thresholds acima de 0,17. Com thresholds menores, o script avisa que faixas podem ter ficado de fora.
 
 ### Argumentos
 
@@ -125,11 +128,12 @@ Como o CSV guarda só o top-3, qualquer gênero fora dele tem probabilidade de n
 | --- | --- | --- |
 | `audio` (posicional) | — | Arquivo de áudio a ser classificado. Obrigatório se `--dataset` não for informado. |
 | `--checkpoint` | obrigatório | Pasta do checkpoint gerado pelo treino, por exemplo `checkpoints/ast-gtzan-head`. |
-| `--top-k` | `3` | Quantidade de gêneros mais prováveis reportados. |
+| `--top-k` | `5` | Quantidade de gêneros mais prováveis reportados. |
 | `--dataset` | — | Modo em lote: `fma_small`, `fma_medium` ou `gtzan`. Substitui o arquivo de áudio. |
 | `--split` | `test` | Split previsto no modo em lote: `train`, `validation` ou `test`. |
 | `--data-dir` | `datasets` | Pasta raiz dos datasets. Só no modo em lote. |
-| `--metadata` | `datasets/fma_tracks.csv` | CSV de metadados do FMA. Só no modo em lote com o FMA. |
+| `--metadata` | `datasets/fma_tracks.csv` | CSV de metadados do FMA (gêneros, splits, artistas e títulos). Só no modo em lote com o FMA. |
+| `--gtzan-index` | `{data-dir}/GTZAN/index.txt` | Índice de artistas e títulos do GTZAN. Se não existir, as predições saem sem nomes, com um aviso. |
 | `--output` | `predictions/{nome do checkpoint}_{dataset}_{split}.csv` | CSV com as predições do modo em lote. |
 | `--batch-size` | `16` | Tamanho do batch do modo em lote. |
 
@@ -179,6 +183,25 @@ uv run python -m mgc_finetuning.plot --checkpoint checkpoints/ast-gtzan-lora
 | `per_class_metrics.pdf` | Precision, recall e F1 por classe na melhor época. |
 
 As curvas marcam a época do checkpoint salvo (melhor acurácia de validação). As fontes são embutidas como TrueType (sem fontes Type 3) e o texto continua editável. As cores vêm de uma paleta segura para daltonismo, e as séries das curvas também usam marcadores diferentes, para continuarem distinguíveis em impressão em tons de cinza. Checkpoints antigos sem métricas macro ou sem os CSVs da melhor época geram apenas as figuras possíveis.
+
+#### Espectrograma Mel do BAT
+
+O script `mgc_finetuning.spectrogram` gera, para cada arquivo de áudio (MP3, WAV etc.), um PDF com o espectrograma Mel exatamente como o BAT o recebe. Ele usa o próprio `BATMelSpectrogram` no modo de avaliação, então a figura mostra os 10,24 s da inferência, já normalizados para [0, 1]:
+
+```powershell
+uv run python -m mgc_finetuning.spectrogram datasets/GTZAN/jazz/jazz.00000.wav datasets/fma_small/000/000182.mp3
+```
+
+Cada figura é salva em `figures/spectrograms/{nome do arquivo}_bat_mel.pdf`. O eixo vertical mostra a frequência em Mel (escala HTK, de 0 a cerca de 2840 Mel, que corresponde a 0–8 kHz), com cada um dos 128 bins posicionado no valor Mel do seu centro. O eixo horizontal mostra o tempo em segundos. Faixas com menos de 10,24 s mantêm o padding com zeros que o modelo recebe, e o início dele é marcado na figura. O mapa de cores padrão é a mesma escala azul da matriz de confusão. A imagem é rasterizada dentro do PDF para manter o arquivo pequeno, enquanto eixos e textos continuam vetoriais e com fontes TrueType.
+
+A função `plot_mel_spectrogram(audio_path, output_path, start_seconds=0.0, colormap=None)` também pode ser importada de `mgc_finetuning.spectrogram` para uso em outros scripts.
+
+| Argumento | Padrão | Descrição |
+| --- | --- | --- |
+| `audio` (posicional) | obrigatório | Um ou mais arquivos de áudio. |
+| `--output-dir` | `figures/spectrograms` | Pasta dos PDFs. |
+| `--start` | `0` | Início, em segundos, do trecho de 10,24 s. Com o padrão, a figura mostra o trecho usado na inferência. |
+| `--cmap` | escala azul do projeto | Colormap do matplotlib, por exemplo `magma` ou `viridis`. |
 
 ### Ajuste fino com LoRA
 

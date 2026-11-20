@@ -12,3 +12,5 @@ outputs/
 datasets/
 # Results
 *.csv
+# Generated figures
+figures/

@@ -7,6 +7,7 @@ threshold.
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import polars as pl
@@ -95,8 +96,9 @@ def available_genres(predictions: pl.DataFrame, ranks: list[int]) -> list[str]:
 
 def recommend(predictions: pl.DataFrame, ranks: list[int], genre: str, threshold: float) -> pl.DataFrame:
     """Return the tracks whose top-k predictions give ``genre`` a probability >= ``threshold``."""
-    identification = [column for column in ("track_id", "path") if column in predictions.columns]
+    identification = [column for column in ("track_id", "artist", "title") if column in predictions.columns]
     true_genre = [pl.col("genre").alias("true_genre")] if "genre" in predictions.columns else []
+    path = ["path"] if "path" in predictions.columns else []
     # A genre appears at most once in each track's top-k, so stacking the ranks yields no duplicates.
     long = pl.concat(
         predictions.select(
@@ -105,6 +107,7 @@ def recommend(predictions: pl.DataFrame, ranks: list[int], genre: str, threshold
             pl.lit(rank).alias("rank"),
             pl.col(f"top{rank}_genre").alias("predicted_genre"),
             pl.col(f"top{rank}_probability").alias("probability"),
+            *path,
         )
         for rank in ranks
     )
@@ -127,7 +130,9 @@ def show(result: pl.DataFrame, genre: str, threshold: float, top_k: int) -> None
             tbl_hide_column_data_types=True,
             tbl_hide_dataframe_shape=True,
         ):
-            print(result)
+            # Tracks missing from the FMA metadata or the GTZAN index have no artist or title.
+            names = [column for column in ("artist", "title") if column in result.columns]
+            print(result.with_columns(pl.col(names).fill_null("(desconhecido)")))
     # Any genre outside the top-k has probability <= 1 / (k + 1), since the k larger ones also count.
     if threshold <= 1.0 / (top_k + 1):
         print(
@@ -194,6 +199,8 @@ def interactive(predictions: pl.DataFrame, predictions_path: Path, ranks: list[i
 
 
 def main() -> None:
+    # Track titles may hold characters the Windows code page cannot encode when the output is redirected.
+    sys.stdout.reconfigure(errors="replace")
     args = parse_args()
     predictions_path = args.predictions or choose_predictions_file(args.predictions_dir)
     if predictions_path is None:

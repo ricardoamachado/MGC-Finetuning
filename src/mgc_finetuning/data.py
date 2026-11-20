@@ -339,6 +339,44 @@ class FMADataset(Dataset):
         return {"input_values": mel_spectrogram, "labels": label}
 
 
+# Column positions in the FMA tracks.csv, whose three header rows are (group, field, "track_id").
+FMA_ARTIST_NAME_COLUMN = 26  # artist.name
+FMA_TRACK_TITLE_COLUMN = 52  # track.title
+GTZAN_INDEX_URL = "https://github.com/boblsturm/GTZAN/blob/main/index.txt"
+
+
+def load_fma_track_info(metadata_path: Path) -> pl.DataFrame:
+    """Return ``track_id``, ``artist`` and ``title`` for every track of the FMA metadata."""
+    info = pl.read_csv(
+        metadata_path,
+        has_header=False,
+        skip_rows=3,
+        columns=[0, FMA_ARTIST_NAME_COLUMN, FMA_TRACK_TITLE_COLUMN],
+        new_columns=["track_id", "artist", "title"],
+        infer_schema=False,
+    )
+    # Integer round trip so the IDs match the unpadded ones written by predict (e.g. "182").
+    return info.with_columns(
+        pl.col("track_id").cast(pl.Int64).cast(pl.String),
+        pl.col("artist", "title").str.strip_chars().replace("", None),
+    )
+
+
+def load_gtzan_track_info(index_path: Path) -> pl.DataFrame:
+    """Return ``track_id`` (file stem), ``artist`` and ``title`` from Bob L. Sturm's GTZAN index.
+
+    Each entry reads ``blues.00000.wav ::: John Lee Hooker ::: One Bourbon, One Scotch And One Beer``.
+    Unidentified tracks have empty fields, which become nulls.
+    """
+    rows = []
+    for line in index_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#") or ":::" not in line:
+            continue
+        file_name, artist, title = (part.strip() for part in (line.split(":::") + ["", ""])[:3])
+        rows.append({"track_id": Path(file_name).stem, "artist": artist or None, "title": title or None})
+    return pl.DataFrame(rows, schema={"track_id": pl.String, "artist": pl.String, "title": pl.String})
+
+
 GTZAN_SPLIT_FILES = {
     "train": "train_stratified.txt",
     "validation": "valid_stratified.txt",
