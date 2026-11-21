@@ -11,7 +11,10 @@ import torchaudio
 from matplotlib.ticker import StrMethodFormatter
 
 from .data import BATMelSpectrogram
-from .plot import SEQUENTIAL_BLUE, TEXT_SECONDARY  # Importing plot also applies its rcParams.
+from .plot import TEXT_SECONDARY  # Importing plot also applies its rcParams.
+
+# Perceptually uniform and monotonic in lightness, so it also reads in grayscale prints.
+DEFAULT_COLORMAP = "viridis"
 
 
 def _hz_to_mel_htk(frequency: float) -> float:
@@ -76,7 +79,7 @@ def plot_mel_spectrogram(
         origin="lower",
         aspect="auto",
         interpolation="nearest",
-        cmap=colormap or SEQUENTIAL_BLUE,
+        cmap=colormap or DEFAULT_COLORMAP,
         vmin=peak - transform.to_db.top_db,
         vmax=peak,
         extent=(0.0, frames * hop_seconds, mel_min + 0.5 * mel_step, mel_min + (n_mels + 0.5) * mel_step),
@@ -134,7 +137,7 @@ def main() -> None:
     parser.add_argument(
         "--cmap",
         default=None,
-        help="Colormap do matplotlib (ex.: magma, viridis). Padrão: a escala azul usada nas demais figuras.",
+        help=f"Colormap do matplotlib (ex.: magma, inferno). Padrão: {DEFAULT_COLORMAP}.",
     )
     args = parser.parse_args()
     if args.start < 0:
