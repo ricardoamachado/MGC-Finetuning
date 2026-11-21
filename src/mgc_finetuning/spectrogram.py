@@ -1,4 +1,4 @@
-"""Plot the log-Mel spectrogram BAT receives for an audio file as a publication-ready PDF figure."""
+"""Plot the log-Mel spectrogram (dB) BAT computes for an audio file as a publication-ready PDF figure."""
 
 import argparse
 import math
@@ -21,22 +21,30 @@ def _hz_to_mel_htk(frequency: float) -> float:
 def bat_mel_spectrogram(
     audio_path: Path, start_seconds: float = 0.0
 ) -> tuple[np.ndarray, BATMelSpectrogram, int]:
-    """Return BAT's model input for a file as [n_mels, frames], the transform and the unpadded frame count.
+    """Return BAT's log-Mel power in dB, before min-max normalization, as [n_mels, frames].
 
-    The evaluation transform is used, so the clip is the first 10.24 s after ``start_seconds``, exactly as
-    the model sees it at validation and inference time.
+    The steps of ``BATMelSpectrogram`` in evaluation mode are reproduced up to the dB conversion: mono
+    16 kHz audio, Mel power spectrogram, the first 1024 frames after ``start_seconds`` and
+    ``AmplitudeToDB`` with top_db=80. Only the per-clip min-max normalization to [0, 1] is left out, so
+    the values keep their unit, dB relative to a power of 1 (a digital full-scale reference). Frames past
+    the end of a short clip, which the model receives as zero padding, are returned as NaN.
+    Also returns the transform and the number of frames that hold audio.
     """
     waveform, sample_rate = torchaudio.load(audio_path)
     waveform = waveform[:, int(round(start_seconds * sample_rate)) :]
     if waveform.shape[-1] == 0:
         raise ValueError(f"{audio_path} tem menos de {start_seconds:g} s de áudio.")
     transform = BATMelSpectrogram(is_training=False)
+    waveform = waveform.mean(dim=0)
+    if sample_rate != transform.sample_rate:
+        waveform = torchaudio.functional.resample(waveform, sample_rate, transform.sample_rate)
     with torch.no_grad():
-        mel = transform(waveform, sample_rate)  # [target_frames, n_mels]
-    # Same frame count as the transform's centered STFT before cropping or zero padding.
-    resampled_length = math.ceil(waveform.shape[-1] * transform.sample_rate / sample_rate)
-    audio_frames = min(resampled_length // transform.mel.hop_length + 1, transform.target_frames)
-    return mel.T.numpy(), transform, audio_frames
+        mel = transform.mel(waveform)[:, : transform.target_frames]  # [n_mels, frames]
+        mel_db = transform.to_db(mel)
+    audio_frames = mel_db.shape[1]
+    padded = torch.full((mel_db.shape[0], transform.target_frames), float("nan"))
+    padded[:, :audio_frames] = mel_db
+    return padded.numpy(), transform, audio_frames
 
 
 def plot_mel_spectrogram(
@@ -48,8 +56,9 @@ def plot_mel_spectrogram(
 ) -> Path:
     """Save BAT's log-Mel spectrogram of ``audio_path`` as a PDF with time (s) and frequency (Mel) axes.
 
-    Values are BAT's per-clip min-max normalized dB power in [0, 1]. When the clip is shorter than the
-    model input, the zero padding is kept, as the model sees it, and its start is marked.
+    Values are BAT's log-Mel power in dB, before its per-clip min-max normalization; the color scale
+    spans the 80 dB kept by ``top_db``. When the clip is shorter than the model input, the zero-padded
+    frames are left blank and their start is marked.
     """
     spectrogram, transform, audio_frames = bat_mel_spectrogram(audio_path, start_seconds)
     n_mels, frames = spectrogram.shape
@@ -60,15 +69,16 @@ def plot_mel_spectrogram(
     f_max = transform.mel.f_max or transform.sample_rate / 2
     mel_min, mel_max = _hz_to_mel_htk(f_min), _hz_to_mel_htk(f_max)
     mel_step = (mel_max - mel_min) / (n_mels + 1)
+    peak = float(np.nanmax(spectrogram))
     figure, axis = plt.subplots(figsize=figsize)
     image = axis.imshow(
-        spectrogram,
+        np.ma.masked_invalid(spectrogram),
         origin="lower",
         aspect="auto",
         interpolation="nearest",
         cmap=colormap or SEQUENTIAL_BLUE,
-        vmin=0.0,
-        vmax=1.0,
+        vmin=peak - transform.to_db.top_db,
+        vmax=peak,
         extent=(0.0, frames * hop_seconds, mel_min + 0.5 * mel_step, mel_min + (n_mels + 0.5) * mel_step),
         rasterized=True,  # Keeps the PDF small while axes and text stay vector.
     )
@@ -95,7 +105,7 @@ def plot_mel_spectrogram(
         )
 
     colorbar = figure.colorbar(image, ax=axis, fraction=0.046, pad=0.02)
-    colorbar.set_label("Normalized log-Mel power")
+    colorbar.set_label("Power (dB)")
     colorbar.outline.set_visible(False)
     colorbar.ax.tick_params(length=0)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +116,7 @@ def plot_mel_spectrogram(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Gera, em PDF, o espectrograma Mel de arquivos de áudio com o pré-processamento do BAT."
+        description="Gera, em PDF, o espectrograma Mel em dB de arquivos de áudio com o pré-processamento do BAT."
     )
     parser.add_argument("audio", type=Path, nargs="+", help="Arquivos de áudio (.mp3, .wav, ...).")
     parser.add_argument(

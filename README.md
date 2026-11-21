@@ -186,13 +186,13 @@ As curvas marcam a época do checkpoint salvo (melhor acurácia de validação).
 
 #### Espectrograma Mel do BAT
 
-O script `mgc_finetuning.spectrogram` gera, para cada arquivo de áudio (MP3, WAV etc.), um PDF com o espectrograma Mel exatamente como o BAT o recebe. Ele usa o próprio `BATMelSpectrogram` no modo de avaliação, então a figura mostra os 10,24 s da inferência, já normalizados para [0, 1]:
+O script `mgc_finetuning.spectrogram` gera, para cada arquivo de áudio (MP3, WAV etc.), um PDF com o espectrograma Mel em dB calculado pelo pré-processamento do BAT. A figura mostra os 10,24 s usados na inferência e reproduz os passos do `BATMelSpectrogram` em modo de avaliação até a conversão para dB, com `top_db=80`. Só a normalização min-max para [0, 1] é omitida, para que a magnitude mantenha a unidade:
 
 ```powershell
 uv run python -m mgc_finetuning.spectrogram datasets/GTZAN/jazz/jazz.00000.wav datasets/fma_small/000/000182.mp3
 ```
 
-Cada figura é salva em `figures/spectrograms/{nome do arquivo}_bat_mel.pdf`. O eixo vertical mostra a frequência em Mel (escala HTK, de 0 a cerca de 2840 Mel, que corresponde a 0–8 kHz), com cada um dos 128 bins posicionado no valor Mel do seu centro. O eixo horizontal mostra o tempo em segundos. Faixas com menos de 10,24 s mantêm o padding com zeros que o modelo recebe, e o início dele é marcado na figura. O mapa de cores padrão é a mesma escala azul da matriz de confusão. A imagem é rasterizada dentro do PDF para manter o arquivo pequeno, enquanto eixos e textos continuam vetoriais e com fontes TrueType.
+Cada figura é salva em `figures/spectrograms/{nome do arquivo}_bat_mel.pdf`. O eixo vertical mostra a frequência em Mel (escala HTK, de 0 a cerca de 2840 Mel, que corresponde a 0–8 kHz), com cada um dos 128 bins posicionado no valor Mel do seu centro. O eixo horizontal mostra o tempo em segundos. A barra de cores mostra a potência em dB, relativa a uma potência de referência 1 (o fundo de escala digital), e não em dB SPL. Ela cobre os 80 dB abaixo do pico do clipe que o `top_db` preserva. A entrada do modelo é essa mesma matriz mapeada linearmente para [0, 1]. Nas faixas com menos de 10,24 s, os frames que o modelo recebe como padding com zeros ficam em branco, e o início do padding é marcado na figura. O mapa de cores padrão é a mesma escala azul da matriz de confusão. A imagem é rasterizada dentro do PDF para manter o arquivo pequeno, enquanto eixos e textos continuam vetoriais e com fontes TrueType.
 
 A função `plot_mel_spectrogram(audio_path, output_path, start_seconds=0.0, colormap=None)` também pode ser importada de `mgc_finetuning.spectrogram` para uso em outros scripts.
 
