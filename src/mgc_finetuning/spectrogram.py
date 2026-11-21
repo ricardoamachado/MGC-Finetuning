@@ -108,7 +108,7 @@ def plot_mel_spectrogram(
         )
 
     colorbar = figure.colorbar(image, ax=axis, fraction=0.046, pad=0.02)
-    colorbar.set_label("Power (dB)")
+    colorbar.set_label("Magnitude (dB)")
     colorbar.outline.set_visible(False)
     colorbar.ax.tick_params(length=0)
     output_path.parent.mkdir(parents=True, exist_ok=True)
