@@ -118,7 +118,7 @@ def recommend(predictions: pl.DataFrame, ranks: list[int], genre: str, threshold
     )
 
 
-def show(result: pl.DataFrame, genre: str, threshold: float, top_k: int) -> None:
+def show(result: pl.DataFrame, genre: str, threshold: float, top_k: int, num_genres: int) -> None:
     print(f"\n{result.height} faixa(s) com '{genre}' e probabilidade >= {threshold:g}:")
     if result.height:
         # ASCII borders: Unicode box characters fail when the Windows output is redirected (cp1252).
@@ -134,7 +134,7 @@ def show(result: pl.DataFrame, genre: str, threshold: float, top_k: int) -> None
             names = [column for column in ("artist", "title") if column in result.columns]
             print(result.with_columns(pl.col(names).fill_null("(desconhecido)")))
     # Any genre outside the top-k has probability <= 1 / (k + 1), since the k larger ones also count.
-    if threshold <= 1.0 / (top_k + 1):
+    if top_k < num_genres and threshold <= 1.0 / (top_k + 1):
         print(
             f"Aviso: o CSV guarda só o top-{top_k}; com threshold <= {1.0 / (top_k + 1):.2f}, faixas em que "
             f"'{genre}' ficou fora do top-{top_k} podem atender ao threshold e não aparecem na lista."
@@ -173,6 +173,8 @@ def interactive(predictions: pl.DataFrame, predictions_path: Path, ranks: list[i
     print("Gêneros: " + ", ".join(f"{number}) {genre}" for number, genre in enumerate(genres, start=1)))
     while True:
         genre = parse_genre(args.genre, genres) if args.genre else None
+        if args.genre and genre is None:
+            print(f"Gênero desconhecido: {args.genre}")
         while genre is None:
             answer = ask("\nGênero (nome ou número; Enter para sair): ")
             if not answer:
@@ -191,7 +193,7 @@ def interactive(predictions: pl.DataFrame, predictions_path: Path, ranks: list[i
         args.genre = args.threshold = None  # Values from the command line only apply to the first query.
 
         result = recommend(predictions, ranks, genre, threshold)
-        show(result, genre, threshold, len(ranks))
+        show(result, genre, threshold, len(ranks), len(genres))
         if result.height:
             output = default_output(predictions_path, genre, threshold)
             if ask(f"Salvar a lista em {output}? [s/N] ").lower() in {"s", "sim", "y", "yes"}:
@@ -214,7 +216,7 @@ def main() -> None:
         if genre is None:
             raise SystemExit(f"Gênero desconhecido: {args.genre}. Gêneros disponíveis: {', '.join(genres)}")
         result = recommend(predictions, ranks, genre, args.threshold)
-        show(result, genre, args.threshold, len(ranks))
+        show(result, genre, args.threshold, len(ranks), len(genres))
         if args.output is not None:
             save(result, args.output)
         return

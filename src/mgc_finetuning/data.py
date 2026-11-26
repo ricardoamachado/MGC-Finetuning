@@ -8,8 +8,6 @@ import torchaudio
 from torch.utils.data import Dataset
 from transformers import ASTFeatureExtractor
 
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"}
-
 
 class ASTMelSpectrogram(torch.nn.Module):
     """Convert waveforms using the same Kaldi fbank preprocessing as AST."""
@@ -167,94 +165,6 @@ def build_mel_transform(
     return ASTMelSpectrogram(mean=extractor.mean, std=extractor.std, is_training=is_training)
 
 
-def build_manifest(
-    dataset_dir: Path, metadata_path: Path | None = None) -> tuple[pl.DataFrame, list[str]]:
-    """Build a path/label manifest from folders or a CSV/Parquet metadata file."""
-    dataset_dir = dataset_dir.expanduser().resolve()
-    if metadata_path is not None:
-        metadata_path = metadata_path.expanduser().resolve()
-        frame = (
-            pl.read_csv(metadata_path)
-            if metadata_path.suffix.lower() == ".csv"
-            else pl.read_parquet(metadata_path)
-        )
-        required = {"path", "label"}
-        if not required.issubset(frame.columns):
-            raise ValueError(
-                f"O metadata precisa conter as colunas {sorted(required)}."
-            )
-        frame = frame.select("path", "label").with_columns(
-            pl.col("path").map_elements(
-                lambda value: (
-                    str((metadata_path.parent / value).resolve())
-                    if not Path(value).is_absolute()
-                    else str(Path(value).resolve())
-                ),
-                return_dtype=pl.String,
-            ),
-            pl.col("label").cast(pl.String),
-        )
-    else:
-        paths = sorted(
-            path
-            for path in dataset_dir.rglob("*")
-            if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
-        )
-        if not paths:
-            raise FileNotFoundError(f"Nenhum áudio encontrado em {dataset_dir}.")
-        rows = [{"path": str(path), "label": path.parent.name} for path in paths]
-        frame = pl.DataFrame(rows)
-
-    frame = frame.filter(
-        pl.col("path").map_elements(
-            lambda value: Path(value).is_file(), return_dtype=pl.Boolean
-        )
-    )
-    if frame.is_empty():
-        raise FileNotFoundError("O manifesto não contém arquivos de áudio existentes.")
-    labels = sorted(frame.get_column("label").unique().to_list())
-    if len(labels) < 2:
-        raise ValueError("São necessárias pelo menos duas classes para classificação.")
-    return frame.with_columns(
-        pl.col("label")
-        .replace({label: index for index, label in enumerate(labels)})
-        .cast(pl.Int64)
-    ), labels
-
-
-class AudioDataset(Dataset):
-    """Load audio, resample it, and convert it to the representation expected by AST."""
-
-    def __init__(
-        self,
-        manifest: pl.DataFrame,
-        feature_extractor: ASTFeatureExtractor,
-        sample_rate: int = 16_000,
-    ):
-        self.manifest = manifest
-        self.feature_extractor = feature_extractor
-        self.sample_rate = sample_rate
-
-    def __len__(self) -> int:
-        return self.manifest.height
-
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
-        row = self.manifest.row(index, named=True)
-        waveform, source_rate = torchaudio.load(row["path"])
-        waveform = waveform.mean(dim=0)
-        if source_rate != self.sample_rate:
-            waveform = torchaudio.functional.resample(
-                waveform, source_rate, self.sample_rate
-            )
-        features = self.feature_extractor(
-            waveform.numpy(), sampling_rate=self.sample_rate, return_tensors="pt"
-        )
-        return {
-            "input_values": features.input_values.squeeze(0),
-            "labels": torch.tensor(row["label"], dtype=torch.long),
-        }
-
-
 FMA_NESTED_SUBSETS = {
     "small": ("small",),
     "medium": ("small", "medium"),
@@ -269,10 +179,10 @@ class FMADataset(Dataset):
         self,
         dataset_dir: Path,
         metadata_path: Path,
-        subset="small",
+        subset: str = "small",
         split: str = "training",
         class_names: list[str] | None = None,
-        mel_transform: ASTMelSpectrogram | None = None,
+        mel_transform: torch.nn.Module | None = None,
     ):
         if subset not in FMA_NESTED_SUBSETS:
             raise ValueError(f"Subset must be one of {list(FMA_NESTED_SUBSETS)}.")
@@ -304,7 +214,7 @@ class FMADataset(Dataset):
         self.labels = [self.class_to_index[genre] for genre in self.genres]
         self.mel_transform = mel_transform or ASTMelSpectrogram()
         self.length = len(self.track_ids)
-        audio_paths = [self._get_audio_path(track_id) for track_id in self.track_ids]
+        audio_paths = [self.audio_path(track_id) for track_id in self.track_ids]
         missing_paths = [path for path in audio_paths if not path.is_file()]
         if missing_paths:
             examples = ", ".join(str(path) for path in missing_paths[:3])
@@ -313,18 +223,18 @@ class FMADataset(Dataset):
                 f"Exemplos: {examples}"
             )
 
-    def _get_audio_path(self, track_id):
+    def audio_path(self, track_id: int) -> Path:
         # The FMA dataset organizes audio files in folders based on the first three digits of the track ID.
         track_id_str = f"{track_id:06d}"
         folder = track_id_str[:3]
         return self.data_dir / f"fma_{self.subset}" / folder / f"{track_id_str}.mp3"
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.length
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         track_id = self.track_ids[idx]
-        audio_path = self._get_audio_path(track_id)
+        audio_path = self.audio_path(track_id)
 
         # Do not replace failed reads with silence: that would make every failed
         # sample identical and can produce chance-level accuracy without errors.
@@ -384,13 +294,6 @@ GTZAN_SPLIT_FILES = {
 }
 
 
-def _try_load(path: Path) -> tuple[torch.Tensor, int] | None:
-    try:
-        return torchaudio.load(path)
-    except Exception:
-        return None
-
-
 def build_pitch_shift_cache(
     audio_paths: list[Path],
     source_dir: Path,
@@ -415,8 +318,13 @@ def build_pitch_shift_cache(
         return
     print(f"pitch_shift_cache: generating {len(pending)} files in {cache_dir} on {device}")
     for path, n_steps in pending:
-        waveform, source_rate = torchaudio.load(path)
-        waveform = torchaudio.functional.resample(waveform.mean(dim=0), source_rate, sample_rate)
+        try:
+            waveform, source_rate = torchaudio.load(path)
+        except Exception as error:
+            raise RuntimeError(f"Não foi possível carregar o áudio GTZAN: {path}") from error
+        waveform = waveform.mean(dim=0)
+        if source_rate != sample_rate:
+            waveform = torchaudio.functional.resample(waveform, source_rate, sample_rate)
         shifted = torchaudio.functional.pitch_shift(
             waveform.to(device), sample_rate, n_steps, n_fft=2048
         )
@@ -445,7 +353,7 @@ class GTZANDataset(Dataset):
         dataset_dir: Path,
         split: str = "train",
         class_names: list[str] | None = None,
-        mel_transform: ASTMelSpectrogram | None = None,
+        mel_transform: torch.nn.Module | None = None,
         pitch_shift_semitones: tuple[int, ...] = (),
         cache_dir: Path | None = None,
         device: torch.device | None = None,
@@ -462,11 +370,6 @@ class GTZANDataset(Dataset):
             raise FileNotFoundError(
                 f"{len(missing_paths)} arquivos de áudio do GTZAN não foram encontrados. Exemplos: {examples}"
             )
-        # GTZAN ships with at least one corrupted file (jazz.00054.wav), so drop unreadable tracks.
-        unreadable = [path for path in paths if _try_load(path) is None]
-        if unreadable:
-            print(f"gtzan_{split}: ignorando {len(unreadable)} arquivo(s) ilegível(is): {[path.name for path in unreadable]}")
-            paths = [path for path in paths if path not in unreadable]
 
         genres = [path.parent.name for path in paths]
         self.classes_ = sorted(class_names or set(genres))

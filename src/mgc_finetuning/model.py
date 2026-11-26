@@ -1,5 +1,6 @@
 """Audio transformer classifiers fine-tuned through their softmax head or through LoRA adapters."""
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -14,6 +15,19 @@ FINETUNING_METHODS = ("head", "lora")
 # Attention layers named alike in AST and BAT, so both models adapt the same projections. Other
 # targets: k_proj, o_proj, fc1 and fc2 in both models, and gate in BAT only.
 DEFAULT_LORA_TARGET_MODULES = ("q_proj", "v_proj")
+DEFAULT_HEAD_DROPOUT = 0.2
+
+
+def bf16_available(device: torch.device) -> bool:
+    """Return True when BF16 autocast can run natively on ``device``."""
+    return device.type == "cuda" and torch.cuda.is_bf16_supported()
+
+
+def autocast_context(device: torch.device) -> contextlib.AbstractContextManager[None]:
+    """Use BF16 mixed precision on supported CUDA devices, falling back to FP32 otherwise."""
+    if bf16_available(device):
+        return torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+    return contextlib.nullcontext()
 
 
 class _FineTunerMixin:
@@ -31,10 +45,12 @@ class _FineTunerMixin:
     def _load_pretrained_backbone(cls, model_name: str) -> nn.Module:
         raise NotImplementedError
 
-    def _build_classifier(self, num_labels: int | None, dropout: float) -> None:
+    def _build_classifier(self, num_labels: int | None, dropout: float | None) -> None:
         # from_pretrained moves a num_labels kwarg into the config, so fall back to it.
         self.num_labels = num_labels if num_labels is not None else self.config.num_labels
-        self.dropout = nn.Dropout(dropout)
+        head_dropout = dropout if dropout is not None else getattr(self.config, "head_dropout", DEFAULT_HEAD_DROPOUT)
+        self.config.head_dropout = head_dropout
+        self.dropout = nn.Dropout(head_dropout)
         self.classifier = nn.Linear(self.config.hidden_size, self.num_labels)
         self.softmax = nn.Softmax(dim=-1)
         self._classification_loss = nn.CrossEntropyLoss()
@@ -51,6 +67,24 @@ class _FineTunerMixin:
         """Freeze backbone weights and keep the backbone deterministic during training."""
         self.backbone.requires_grad_(False)
         self.backbone.eval()
+
+    def _apply_freezing(self) -> None:
+        """Restore the expected requires_grad state after loading weights from a checkpoint."""
+        self.freeze_backbone()
+        if self.finetuning_method == "lora":
+            for name, parameter in self.backbone.named_parameters():
+                if "lora_" in name:
+                    parameter.requires_grad_(True)
+        self.head_norm.requires_grad_(True)
+        self.classifier.requires_grad_(True)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        result = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        model = result[0] if isinstance(result, tuple) else result
+        # Transformers 5.x recreates parameters when loading safetensors, resetting requires_grad=True.
+        model._apply_freezing()
+        return result
 
     def enable_lora(
         self,
@@ -90,7 +124,7 @@ class _FineTunerMixin:
         cls,
         model_name: str,
         num_labels: int,
-        dropout: float = 0.2,
+        dropout: float = DEFAULT_HEAD_DROPOUT,
         finetuning_method: str = "head",
         lora_rank: int = 1,
         lora_alpha: int = 2,
@@ -123,7 +157,7 @@ class _FineTunerMixin:
 class ASTFineTuner(_FineTunerMixin, ASTPreTrainedModel):
     """Audio Spectrogram Transformer backbone with a trainable Softmax classification head."""
 
-    def __init__(self, config, num_labels: int | None = None, dropout: float = 0.1):
+    def __init__(self, config, num_labels: int | None = None, dropout: float | None = None):
         super().__init__(config)
         self.ast = ASTModel(config)
         self.head_norm = nn.Identity()
@@ -141,7 +175,7 @@ class ASTFineTuner(_FineTunerMixin, ASTPreTrainedModel):
 class BATFineTuner(_FineTunerMixin, BATPreTrainedModel):
     """Better Audio Transformer backbone with a trainable Softmax classification head."""
 
-    def __init__(self, config, num_labels: int | None = None, dropout: float = 0.1):
+    def __init__(self, config, num_labels: int | None = None, dropout: float | None = None):
         super().__init__(config)
         self.bat = BATModel(config)
         # BAT's CLS features are about 200 times smaller than AST's and barely train a linear layer

@@ -20,7 +20,7 @@ from .data import (
     load_gtzan_track_info,
 )
 from .metrics import macro_metrics
-from .model import FINETUNER_CLASSES, checkpoint_model
+from .model import FINETUNER_CLASSES, autocast_context, checkpoint_model
 
 DATASETS = ("fma_small", "fma_medium", "gtzan")
 PREDICTIONS_DIR = Path("predictions")
@@ -101,8 +101,9 @@ def predict_top_k(
     model: torch.nn.Module, mel_spectrograms: torch.Tensor, top_k: int, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return the ``top_k`` probabilities and class indices of each spectrogram, most likely first."""
-    with torch.no_grad():
+    with torch.inference_mode(), autocast_context(device):
         probabilities = model(mel_spectrograms.to(device))["probabilities"]
+    probabilities = probabilities.float()
     values, indices = probabilities.topk(min(top_k, probabilities.shape[-1]), dim=-1)
     return values.cpu(), indices.cpu()
 
@@ -145,7 +146,7 @@ def build_dataset(
                 mel_transform=mel_transform,
             )
             tracks = [
-                {"track_id": str(track_id), "path": dataset._get_audio_path(track_id).as_posix()}
+                {"track_id": str(track_id), "path": dataset.audio_path(track_id).as_posix()}
                 for track_id in dataset.track_ids
             ]
     except ValueError as error:
@@ -207,6 +208,10 @@ def predict_dataset(args: argparse.Namespace, device: torch.device) -> None:
             flush()
     flush()
 
+    if not rows:
+        raise SystemExit(
+            f"Nenhuma faixa de {args.dataset} ({args.split}) pôde ser carregada ({len(skipped)} ignorada(s))."
+        )
     predictions = add_track_info(pl.DataFrame(rows), args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     predictions.write_csv(args.output)

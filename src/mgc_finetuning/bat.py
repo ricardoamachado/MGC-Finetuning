@@ -34,7 +34,10 @@ from the official encoder in three ways, none of which changes the computed func
   them for the fixed 1024-frame inputs of this project.
 """
 
+from pathlib import Path
+
 import torch
+import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from torch import nn
@@ -103,8 +106,8 @@ class BATAttention(nn.Module):
         query = self._split_heads(self.q_proj(tokens))
         key = self._split_heads(self.k_proj(tokens))
         value = self._split_heads(self.v_proj(tokens))
-        attention = ((query * self.scale) @ key.transpose(-2, -1)).softmax(dim=-1)
-        attended = (attention @ value).transpose(1, 2).reshape(tokens.shape)
+        attended = F.scaled_dot_product_attention(query, key, value, scale=self.scale)
+        attended = attended.transpose(1, 2).reshape(tokens.shape)
         return self.o_proj(attended * self.gate(tokens).sigmoid())
 
 
@@ -169,13 +172,19 @@ class BATModel(BATPreTrainedModel):
         self.post_init()
 
     @classmethod
-    def from_hub(cls, repo_id: str) -> "BATModel":
-        """Load the encoder from a Hugging Face repository with the official weight layout."""
+    def from_hub(cls, repo_id: str | Path) -> "BATModel":
+        """Load the encoder from a Hugging Face repository or local directory with the official weight layout."""
         config = BATConfig.from_pretrained(repo_id)
         # Saved checkpoints must not point at the repository's remote code.
         config.__dict__.pop("auto_map", None)
         model = cls(config)
-        state_dict = load_file(hf_hub_download(repo_id, "model.safetensors"))
+        local_dir = Path(repo_id)
+        weights_path = (
+            local_dir / "model.safetensors"
+            if local_dir.is_dir()
+            else Path(hf_hub_download(str(repo_id), "model.safetensors"))
+        )
+        state_dict = load_file(weights_path)
         model.load_state_dict(_convert_official_state_dict(state_dict))
         return model
 

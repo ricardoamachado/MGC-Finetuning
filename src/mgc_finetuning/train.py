@@ -7,7 +7,7 @@ from pathlib import Path
 
 import polars as pl
 import torch
-from torch.utils.data import DataLoader, default_collate
+from torch.utils.data import DataLoader
 from transformers import ASTFeatureExtractor
 
 from .data import FMADataset, GTZANDataset, build_mel_transform
@@ -18,22 +18,14 @@ from .model import (
     DEFAULT_MODEL_NAMES,
     FINETUNER_CLASSES,
     FINETUNING_METHODS,
+    autocast_context,
+    bf16_available,
 )
 
 
-def _prepare_batch(batch: object, device: torch.device) -> dict[str, torch.Tensor]:
-    """Convert the dataset's possible list/tuple output to model inputs."""
-    if isinstance(batch, list):
-        if batch and all(isinstance(item, dict) for item in batch):
-            batch = default_collate(batch)
-        elif len(batch) == 2:
-            batch = {"input_values": batch[0], "labels": batch[1]}
-    elif isinstance(batch, tuple) and len(batch) == 2:
-        batch = {"input_values": batch[0], "labels": batch[1]}
-
-    if not isinstance(batch, dict):
-        raise TypeError("Expected a mapping or (input_values, labels) batch")
-    return {key: value.to(device) for key, value in batch.items()}
+def _move_batch(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
+    non_blocking = device.type == "cuda"
+    return {key: value.to(device, non_blocking=non_blocking) for key, value in batch.items()}
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,7 +86,7 @@ def parse_args() -> argparse.Namespace:
         choices=FINETUNING_METHODS,
         default="head",
         help=(
-            "Metodologia de ajuste fino: 'head' treina apenas a cabeça Softmax com o backbone AST congelado; "
+            "Metodologia de ajuste fino: 'head' treina apenas a cabeça Softmax com o backbone congelado; "
             "'lora' treina adaptadores LoRA no backbone junto com a cabeça."
         ),
     )
@@ -114,7 +106,10 @@ def parse_args() -> argparse.Namespace:
         "--lora-target-modules",
         nargs="+",
         default=list(DEFAULT_LORA_TARGET_MODULES),
-        help="Camadas lineares do AST que recebem adaptadores LoRA (ex.: q_proj k_proj v_proj o_proj fc1 fc2).",
+        help=(
+            "Camadas lineares do backbone que recebem adaptadores LoRA "
+            "(ex.: q_proj k_proj v_proj o_proj fc1 fc2, e gate no BAT)."
+        ),
     )
     parser.add_argument("--seed", type=int, default=1337)
     args = parser.parse_args()
@@ -176,10 +171,11 @@ def main() -> None:
         f"num_classes={len(labels)} "
         f"classes={labels}"
     )
+    pin_memory = device.type == "cuda"
     train_loader = DataLoader(
-        train_set, batch_size=args.batch_size, shuffle=True, num_workers=0
+        train_set, batch_size=args.batch_size, shuffle=True, num_workers=0, pin_memory=pin_memory
     )
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, num_workers=0)
+    val_loader = DataLoader(val_set, batch_size=args.batch_size, num_workers=0, pin_memory=pin_memory)
 
     model = FINETUNER_CLASSES[args.model].from_backbone(
         args.model_name,
@@ -190,6 +186,8 @@ def main() -> None:
         lora_dropout=args.lora_dropout,
         lora_target_modules=tuple(args.lora_target_modules),
     ).to(device)
+    model.config.id2label = {index: label for index, label in enumerate(labels)}
+    model.config.label2id = {label: index for index, label in enumerate(labels)}
     trainable_parameters = [
         (name, parameter)
         for name, parameter in model.named_parameters()
@@ -197,8 +195,10 @@ def main() -> None:
     ]
     trainable_parameter_count = sum(parameter.numel() for _, parameter in trainable_parameters)
     total_parameter_count = sum(parameter.numel() for parameter in model.parameters())
+    precision = "bf16" if bf16_available(device) else "fp32"
     print(
         f"finetuning={args.finetuning} "
+        f"precision={precision} "
         f"learning_rate={args.learning_rate:g} "
         f"trainable_parameters={trainable_parameter_count} "
         f"total_parameters={total_parameter_count} "
@@ -225,10 +225,11 @@ def main() -> None:
         train_correct = 0
         train_total = 0
         for batch in train_loader:
-            batch = _prepare_batch(batch, device)
+            batch = _move_batch(batch, device)
             optimizer.zero_grad(set_to_none=True)
-            output = model(**batch)
-            loss = output["loss"]
+            with autocast_context(device):
+                output = model(**batch)
+                loss = output["loss"]
             loss.backward()
             optimizer.step()
             batch_size = batch["labels"].size(0)
@@ -242,9 +243,9 @@ def main() -> None:
         val_loss_sum = 0.0
         val_targets: list[torch.Tensor] = []
         val_predictions: list[torch.Tensor] = []
-        with torch.no_grad():
+        with torch.inference_mode(), autocast_context(device):
             for batch in val_loader:
-                batch = _prepare_batch(batch, device)
+                batch = _move_batch(batch, device)
                 output = model(**batch)
                 batch_size = batch["labels"].size(0)
                 val_loss_sum += output["loss"].item() * batch_size
