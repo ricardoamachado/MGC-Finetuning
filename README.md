@@ -78,7 +78,7 @@ uv run python -m mgc_finetuning.predict --dataset gtzan --checkpoint checkpoints
 uv run python -m mgc_finetuning.predict --dataset fma_small --checkpoint checkpoints/bat-fma_small-lora
 ```
 
-O resultado é salvo em `predictions/{nome do checkpoint}_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `artist` e `title` (nome real da música), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 5. No FMA, artista e título vêm do `fma_tracks.csv` (`artist.name` e `track.title`). No GTZAN, vêm do `index.txt` (veja [Formato dos dados](#formato-dos-dados)). Faixas não identificadas ficam com esses campos vazios. O script também imprime a acurácia top-1, top-3 e top-5 do split e a quantidade de faixas sem identificação. Arquivos ilegíveis são ignorados com um aviso.
+O resultado é salvo em `predictions/{nome do checkpoint}_{dataset}_{split}.csv`, com uma linha por faixa e as colunas `track_id` (ID do FMA ou nome do arquivo no GTZAN), `artist` e `title` (nome real da música), `path`, `genre` (gênero real) e `top{n}_genre`/`top{n}_probability` para n de 1 a 5. No FMA, artista e título vêm do `fma_tracks.csv` (`artist.name` e `track.title`). No GTZAN, vêm do `index.txt` (veja [Formato dos dados](#formato-dos-dados)). Faixas não identificadas ficam com esses campos vazios. O script também imprime a acurácia top-1, top-2 e top-5 do split, a precisão, o recall e o F1-score macro (`precision_macro`, `recall_macro` e `f1_macro`, calculados sobre o gênero top-1) e a quantidade de faixas sem identificação. Arquivos ilegíveis são ignorados com um aviso.
 
 ### Recomendação de faixas por gênero
 

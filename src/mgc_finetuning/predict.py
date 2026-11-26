@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import torch
 import torchaudio
@@ -18,6 +19,7 @@ from .data import (
     load_fma_track_info,
     load_gtzan_track_info,
 )
+from .metrics import macro_metrics
 from .model import FINETUNER_CLASSES, checkpoint_model
 
 DATASETS = ("fma_small", "fma_medium", "gtzan")
@@ -212,14 +214,19 @@ def predict_dataset(args: argparse.Namespace, device: torch.device) -> None:
         k: predictions.select(
             pl.any_horizontal(pl.col("genre") == pl.col(f"top{rank}_genre") for rank in range(1, k + 1)).mean()
         ).item()
-        for k in sorted({1, min(3, top_k), top_k})
+        for k in sorted({1, min(2, top_k), top_k})
     }
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    y_true = np.array([label_to_index[genre] for genre in predictions["genre"]])
+    y_pred = np.array([label_to_index[genre] for genre in predictions["top1_genre"]])
+    macro = macro_metrics(y_true, y_pred, len(labels))  # Computed on the top-1 predictions.
     unidentified = predictions.filter(pl.col("artist").is_null() & pl.col("title").is_null()).height
     print(
         f"dataset={args.dataset} split={args.split} tracks={predictions.height} skipped={len(skipped)} "
         f"unidentified_tracks={unidentified} "
         + " ".join(f"top{k}_accuracy={accuracy:.4f}" for k, accuracy in accuracies.items())
     )
+    print(" ".join(f"{name}={value:.4f}" for name, value in macro.items()))
     print(f"predições salvas: {args.output}")
 
 
